@@ -1,3 +1,9 @@
+mod command;
+mod run;
+mod tui;
+
 fn main() {
-    println!("Hello, world!");
+    if let Err(e) = run::run() {
+        eprintln!("{}", e);
+    }
 }
