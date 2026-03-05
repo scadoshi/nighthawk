@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use std::{
     collections::HashMap,
     io::{Read, Seek, SeekFrom, Write},
