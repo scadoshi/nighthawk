@@ -1,4 +1,7 @@
-use crate::{command::Command, tui};
+use crate::{
+    command::{Command, Entry},
+    tui,
+};
 use std::{collections::HashMap, fs::OpenOptions, io::Read};
 
 pub fn run() -> anyhow::Result<()> {
@@ -18,10 +21,15 @@ pub fn run() -> anyhow::Result<()> {
 
     while (pos as usize) < data.len() {
         let slice = &data[pos as usize..];
-        match wincode::deserialize::<(String, String)>(slice) {
-            Ok((k, v)) => {
-                let size = wincode::serialized_size(&(k.clone(), v))?;
-                index.insert(k, pos);
+        match wincode::deserialize::<Entry>(slice) {
+            Ok(entry @ Entry::Set { .. }) => {
+                let size = wincode::serialized_size(&entry)?;
+                index.insert(entry.k().to_owned(), pos);
+                pos += size;
+            }
+            Ok(entry @ Entry::Delete { .. }) => {
+                let size = wincode::serialized_size(&entry)?;
+                index.remove(entry.k());
                 pos += size;
             }
             Err(_) => break,
