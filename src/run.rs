@@ -1,8 +1,11 @@
 use crate::{
-    command::{Command, Entry},
+    command::Command,
+    index::{Index, IndexOps},
     tui,
 };
-use std::{collections::HashMap, fs::OpenOptions, io::Read};
+use std::fs::OpenOptions;
+
+pub const DATA_PATH: &str = "data.log";
 
 pub fn run() -> anyhow::Result<()> {
     tui::welcome();
@@ -12,32 +15,13 @@ pub fn run() -> anyhow::Result<()> {
         .truncate(false)
         .read(true)
         .write(true)
-        .open("data.log")?;
-    let mut data = Vec::<u8>::new();
-    buf.read_to_end(&mut data)?;
+        .open(DATA_PATH)?;
 
-    let mut index = HashMap::<String, u64>::new();
-    let mut pos: u64 = 0;
-
-    while (pos as usize) < data.len() {
-        let slice = &data[pos as usize..];
-        match wincode::deserialize::<Entry>(slice) {
-            Ok(entry @ Entry::Set { .. }) => {
-                let size = wincode::serialized_size(&entry)?;
-                index.insert(entry.k().to_owned(), pos);
-                pos += size;
-            }
-            Ok(entry @ Entry::Delete { .. }) => {
-                let size = wincode::serialized_size(&entry)?;
-                index.remove(entry.k());
-                pos += size;
-            }
-            Err(_) => break,
-        }
-    }
+    let mut index = Index::from_buf(&mut buf)?;
 
     loop {
-        Command::unfallible_get().execute(&mut buf, &mut index)?;
+        let command = Command::unfallible_get();
+        command.execute(&mut buf, &mut index)?;
         tui::hr();
         if false {
             break;

@@ -1,4 +1,5 @@
 mod command;
+mod index;
 mod run;
 mod tui;
 
