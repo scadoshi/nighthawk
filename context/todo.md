@@ -1,26 +1,25 @@
 # Todo
 
-## Finish buf_merge in src/index.rs
+## Phase 3 — Binary serialization
 
-- [ ] Remove line 95 (`*self = Self::from_buf(buf)?;`) — index is already rebuilt in the write loop above it, this line tries to re-read from a stale file handle and will fail
-- [ ] Stale file handle — after rename, the `buf` passed into `buf_merge` still points at the old deleted file. Caller in `run.rs` needs to reopen `data.log` after merge. Options:
-  - Return a new file handle from `buf_merge`
-  - Have `buf_merge` take ownership and return a reopened handle
-  - Reopen in `run.rs` after calling merge
+- [ ] Add fixed-size entry headers (magic bytes + CRC32 checksum + key/value lengths)
+  - Enables reliable corruption detection and recovery
+  - Can scan forward to next magic bytes after corrupt entry instead of breaking
+- [ ] CRC32 checksums per entry — verify integrity on read
+- [ ] Consider: `crc32fast` crate for checksum implementation
 
-## Remaining Phase 2
+## Future phases
 
-- [ ] Wire size-based merge triggering into `run.rs` — check `std::fs::metadata(DATA_PATH)?.len()` after writes, trigger merge when threshold exceeded
-- [ ] Handle partial/corrupt entries — truncated writes at end of log should be skipped gracefully
-- [ ] Crash recovery — what happens if the process dies mid-write?
-  - Study: `fsync` / `File::sync_all()` — forces OS to flush buffers to disk
-  - Study: write-ahead logging (WAL) — write intent before applying
+- Phase 4: SSTable / LSM-tree (BTreeMap memtable, sorted segments, bloom filters)
+- Phase 5: Network layer (TCP server, wire protocol)
+- Phase 6: Concurrency (RwLock, tokio/threads, MVCC)
 
 ## Study list
 
 - ~~`std::io::Seek`, `SeekFrom`, `stream_position()`~~ — learned in Phase 1
 - ~~Bitcask paper~~ — read, using as model for Phase 2
-- `std::fs::File::sync_all()` — flush to disk for durability
+- ~~`std::fs::metadata().len()`~~ — learned for size-based merge triggering
+- ~~`std::fs::File::sync_all()`~~ — learned and implemented in Phase 2
 - CRC32 checksums (`crc32fast` crate) — for detecting corrupt entries in Phase 3
 - `BTreeMap` — sorted in-memory structure needed for Phase 4 memtable
 - `std::io::BufWriter` — batching writes for better performance
