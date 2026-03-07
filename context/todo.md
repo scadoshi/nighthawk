@@ -2,34 +2,43 @@
 
 ## Phase 3 — Binary serialization
 
-### Entry format
+### Approach: wrap wincode with a header
 
-Design a fixed-layout entry format to replace raw wincode-serialized tuples:
+Keep using wincode for Entry serialization. Add a header around each serialized entry:
 
 ```
-[magic: 2 bytes][crc32: 4 bytes][key_len: 4 bytes][val_len: 4 bytes][tag: 1 byte][key][value]
+[magic: 2 bytes][crc32: 4 bytes][entry_len: 4 bytes][wincode-serialized Entry]
 ```
 
-- `magic` — constant bytes (e.g. `0x4E48` for "NH") to identify entry boundaries
-- `crc32` — checksum over everything after the checksum field (key_len + val_len + tag + key + value)
-- `key_len` / `val_len` — fixed-size u32 lengths so you can skip entries without deserializing
-- `tag` — 0 for Set, 1 for Delete (replaces the wincode enum discriminant)
-- `key` / `value` — raw bytes, length determined by header
+Header is 10 bytes total. Entry data is unchanged from Phase 2.
+
+### Concepts
+
+**Magic bytes** — a fixed constant (e.g. `0x4E48` for "NH") written at the start of every entry.
+Purpose: recovery. After corruption, scan forward byte-by-byte looking for the magic bytes
+to find where the next valid entry starts. Without this, one corrupt entry means
+everything after it is unreadable.
+
+**CRC32 checksum** — a 4-byte "fingerprint" computed from the entry data.
+Written into the header when the entry is stored. On read, recompute the checksum from
+the data and compare. If they don't match, the entry was corrupted (bit flip, partial write, etc).
+The `crc32fast` crate does this: `let checksum: u32 = crc32fast::hash(&data);` — that's the whole API.
+
+**entry_len** — the byte length of the wincode-serialized entry that follows.
+Lets you skip entries without deserializing (jump ahead by entry_len bytes to the next header).
+Also lets you know exactly how many bytes to read and pass to `wincode::deserialize`.
 
 ### Tasks
 
-- [ ] Define entry header struct with fixed-size fields
-- [ ] Write serialization — build the header + payload bytes manually (no more `wincode::serialize` for entries)
-- [ ] Write CRC32 checksum over payload when writing entries
-  - Study: `crc32fast` crate
-- [ ] Read deserialization — parse header, verify checksum, extract key/value
-- [ ] Verify checksum on every `get` — return corruption error if mismatch
+- [ ] Add `crc32fast` dependency
+- [ ] Define header constants: magic bytes, header size (10 bytes)
+- [ ] Write path — build header (magic + crc32 of entry bytes + entry_len), then write header + entry bytes
+- [ ] Read path — read header, verify magic, read entry_len bytes, verify crc32, then `wincode::deserialize`
 - [ ] Update index scan (`from_file`) to use new format
-  - Use magic bytes to find entry boundaries
-  - Skip entries with bad checksums instead of breaking
+  - On bad magic or bad checksum: scan forward byte-by-byte for next magic bytes
+  - This replaces the current `Err(_) => break` with actual recovery
 - [ ] Update merge to write new format
-- [ ] Update `serialized_size` usage — entry size is now `header_size + key_len + val_len`
-- [ ] Consider: `std::io::BufWriter` for batching writes instead of writing + syncing each entry individually
+- [ ] Consider: `std::io::BufWriter` for batching writes
 
 ## Future phases
 
