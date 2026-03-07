@@ -23,6 +23,7 @@ pub enum Command {
     Get { k: String },
     Delete { k: String },
     Quit,
+    Help,
 }
 
 impl TryFrom<&str> for Command {
@@ -62,6 +63,8 @@ impl TryFrom<&str> for Command {
             Ok(Self::Delete { k })
         } else if command_str == "quit" || command_str == "q" || command_str == "exit" {
             Ok(Self::Quit)
+        } else if command_str == "help" || command_str == "h" {
+            Ok(Self::Help)
         } else {
             Err(Self::Error::InvalidCommand)
         }
@@ -128,6 +131,10 @@ impl Execute for Log {
                 println!("{} deleted", entry.k());
             }
             Command::Quit => {}
+            Command::Help => {
+                tui::hr();
+                tui::command_hint();
+            }
         }
 
         if self.megabytes()? > 10 {
