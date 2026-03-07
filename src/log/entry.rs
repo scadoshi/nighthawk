@@ -13,4 +13,11 @@ impl Entry {
             Self::Delete { k } => k.as_str(),
         }
     }
+
+    pub fn v(&self) -> Option<&str> {
+        match self {
+            Self::Set { v, .. } => Some(v.as_str()),
+            Self::Delete { .. } => None,
+        }
+    }
 }

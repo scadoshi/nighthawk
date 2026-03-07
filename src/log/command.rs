@@ -100,6 +100,7 @@ impl Execute for Log {
                 self.file.write_all(&bytes)?;
                 self.file.sync_all()?;
                 self.index.insert(entry.k().to_owned(), offset);
+                println!("{} => {}", entry.k(), entry.v().unwrap());
             }
             Command::Get { k } => {
                 let Some(&offset) = self.index.get(&k) else {
@@ -115,7 +116,7 @@ impl Execute for Log {
                         offset
                     ));
                 };
-                println!("{}", v);
+                println!("{} => {}", k, v);
             }
             Command::Delete { k } => {
                 self.file.seek(SeekFrom::End(0))?;
@@ -124,6 +125,7 @@ impl Execute for Log {
                 self.file.write_all(&bytes)?;
                 self.file.sync_all()?;
                 self.index.remove(entry.k());
+                println!("{} deleted", entry.k());
             }
             Command::Quit => {}
         }
