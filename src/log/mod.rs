@@ -39,15 +39,15 @@ impl Log {
             .write(true)
             .open(TEMP_PATH)?;
 
-        let mut data = Vec::<u8>::new();
+        let mut bytes = Vec::<u8>::new();
         self.file.seek(SeekFrom::Start(0))?;
-        self.file.read_to_end(&mut data)?;
+        self.file.read_to_end(&mut bytes)?;
 
         let mut entries = HashMap::<String, Entry>::new();
         let mut offset: u64 = 0;
 
-        while (offset as usize) < data.len() {
-            let slice = &data[offset as usize..];
+        while (offset as usize) < bytes.len() {
+            let slice = &bytes[offset as usize..];
             match wincode::deserialize::<Entry>(slice) {
                 Ok(entry @ Entry::Set { .. }) => {
                     let size = wincode::serialized_size(&entry)?;

@@ -111,11 +111,11 @@ impl Execute for Log {
                     return Ok(());
                 };
                 self.file.seek(SeekFrom::Start(offset))?;
-                let mut data = Vec::new();
-                self.file.read_to_end(&mut data)?;
-                let Entry::Set { v, .. } = wincode::deserialize::<Entry>(&data)? else {
+                let mut bytes = Vec::<u8>::new();
+                self.file.read_to_end(&mut bytes)?;
+                let Entry::Set { v, .. } = wincode::deserialize::<Entry>(&bytes)? else {
                     return Err(anyhow!(
-                        "Entry at offset {} expected to return `Entry::Set {{ .. }}`. Database likely corrupted.",
+                        "Entry at offset {} expected to return `Entry::Set {{ .. }}` but did not. Log likely corrupted.",
                         offset
                     ));
                 };

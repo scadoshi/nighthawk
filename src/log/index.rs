@@ -9,14 +9,14 @@ pub trait IndexOps {
 
 impl IndexOps for Index {
     fn from_file(buf: &mut File) -> anyhow::Result<Index> {
-        let mut data = Vec::<u8>::new();
-        buf.read_to_end(&mut data)?;
+        let mut bytes = Vec::<u8>::new();
+        buf.read_to_end(&mut bytes)?;
 
         let mut index = HashMap::<String, u64>::new();
         let mut offset: u64 = 0;
 
-        while (offset as usize) < data.len() {
-            let slice = &data[offset as usize..];
+        while (offset as usize) < bytes.len() {
+            let slice = &bytes[offset as usize..];
             match wincode::deserialize::<Entry>(slice) {
                 Ok(entry @ Entry::Set { .. }) => {
                     let size = wincode::serialized_size(&entry)?;
