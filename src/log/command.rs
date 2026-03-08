@@ -122,13 +122,17 @@ impl Execute for Log {
                 println!("{} => {}", k, v);
             }
             Command::Delete { k } => {
-                self.file.seek(SeekFrom::End(0))?;
-                let entry = Entry::Delete { k };
-                let bytes = wincode::serialize(&entry)?;
-                self.file.write_all(&bytes)?;
-                self.file.sync_all()?;
-                self.index.remove(entry.k());
-                println!("{} deleted", entry.k());
+                match self.index.remove(&k) {
+                    Some(_) => {
+                        self.file.seek(SeekFrom::End(0))?;
+                        let entry = Entry::Delete { k };
+                        let bytes = wincode::serialize(&entry)?;
+                        self.file.write_all(&bytes)?;
+                        self.file.sync_all()?;
+                        println!("{} deleted", entry.k())
+                    }
+                    None => println!("{} not found", k),
+                };
             }
             Command::Quit => {}
             Command::Help => {
