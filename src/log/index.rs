@@ -1,7 +1,9 @@
 use super::{entry::Entry, header::Header};
 use std::{collections::HashMap, fs::File, io::Seek};
 
+/// Builds a key-to-offset index by scanning a log file.
 pub trait Index {
+    /// Scans the file from the beginning, recording the latest offset per key.
     fn from_file(buf: &mut File) -> anyhow::Result<Self>
     where
         Self: Sized;

@@ -7,6 +7,7 @@ use super::{
 };
 use crate::log::STD_PATH;
 
+/// Opens the log and runs the REPL until quit.
 pub fn run() -> anyhow::Result<()> {
     tui::welcome();
     let mut log = Log::new(STD_PATH, false)?;

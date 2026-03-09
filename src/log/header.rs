@@ -5,21 +5,31 @@ use std::{
 };
 use thiserror::Error;
 
+/// Size of the entry header in bytes: magic (2) + crc32 (4) + entry_len (4).
 pub const HEADER_LEN: u64 = 10;
-pub const MAGIC: u16 = 0x4E48; // NH
+/// Magic bytes written at the start of every entry, used to locate entry boundaries.
+/// (String translation: "NH")
+pub const MAGIC: u16 = 0x4E48;
 
+/// Reasons an entry failed to parse from a byte slice.
 #[derive(Debug, Error)]
 pub enum CorruptionType {
-    #[error("Header not found")]
+    /// Not enough bytes remaining for a complete header.
+    #[error("incomplete header: not enough bytes")]
     HeaderNotFound,
-    #[error("Magic bytes not found")]
-    MagicNotFound,
-    #[error("Checksum does not match")]
-    ChecksumNotMatch,
-    #[error("Failed to parse `Entry`")]
+    /// Magic bytes don't match the expected constant.
+    #[error("missing magic bytes at entry boundary")]
+    MagicBytesNotFound,
+    /// CRC32 of the entry data doesn't match the stored checksum.
+    #[error("checksum mismatch: entry data corrupted")]
+    ChecksumMismatch,
+    /// Entry data is present but wincode deserialization failed.
+    #[error("failed to deserialize entry payload")]
     EntryParseError,
 }
 
+/// Parses a header + entry from a byte slice. Returns the entry and total bytes consumed.
+/// Pure function — no I/O.
 fn parse_entry(bytes: &[u8]) -> Result<(Entry, usize), CorruptionType> {
     if bytes.len() < HEADER_LEN as usize {
         return Err(CorruptionType::HeaderNotFound);
@@ -29,7 +39,7 @@ fn parse_entry(bytes: &[u8]) -> Result<(Entry, usize), CorruptionType> {
     let magic_bytes: [u8; 2] = bytes[offset..offset + 2].try_into().unwrap();
     let magic = u16::from_le_bytes(magic_bytes);
     if magic != MAGIC {
-        return Err(CorruptionType::MagicNotFound);
+        return Err(CorruptionType::MagicBytesNotFound);
     }
     offset += 2;
     // checksum
@@ -46,15 +56,20 @@ fn parse_entry(bytes: &[u8]) -> Result<(Entry, usize), CorruptionType> {
     }
     let entry_bytes = &bytes[offset..offset + len as usize];
     if checksum != crc32fast::hash(entry_bytes) {
-        return Err(CorruptionType::ChecksumNotMatch);
+        return Err(CorruptionType::ChecksumMismatch);
     }
     let entry: Entry =
         wincode::deserialize(entry_bytes).map_err(|_| CorruptionType::EntryParseError)?;
     Ok((entry, HEADER_LEN as usize + len as usize))
 }
 
+/// Read/write entries with the on-disk header format:
+/// `[magic: 2B][crc32: 4B][entry_len: 4B][wincode-serialized Entry]`
 pub trait Header {
+    /// Appends an entry with header to end of file. Returns the byte offset where it was written.
     fn write_entry_with_header(&mut self, entry: &Entry) -> anyhow::Result<u64>;
+    /// Reads the next valid entry from the current cursor position.
+    /// Scans byte-by-byte on corruption to find the next valid magic + checksum match.
     fn read_next_entry_with_header(&mut self) -> anyhow::Result<Option<Entry>>;
 }
 
@@ -92,6 +107,7 @@ impl Header for File {
                     self.seek(SeekFrom::Start(start + offset as u64 + consumed as u64))?;
                     return Ok(Some(entry));
                 }
+                // Corruption recovery: advance one byte and retry.
                 Err(_) => offset += 1,
             }
         }

@@ -12,16 +12,20 @@ use std::{
     io::{Seek, SeekFrom},
 };
 
+/// Append-only log store. Owns the data file and in-memory key-to-offset index.
 #[derive(Debug)]
 pub struct Log {
     file: File,
     index: HashMap<String, u64>,
 }
 
+/// Default log file path.
 pub const STD_PATH: &str = "data.log";
+/// Temporary file used during merge, renamed to `STD_PATH` on completion.
 pub const TEMP_PATH: &str = "temp.log";
 
 impl Log {
+    /// Opens or creates a log file and rebuilds the index from its contents.
     pub fn new(path: &str, truncate: bool) -> anyhow::Result<Self> {
         let mut file = OpenOptions::new()
             .create(true)
@@ -33,16 +37,19 @@ impl Log {
         Ok(Self { file, index })
     }
 
+    /// Appends an entry to the log and updates the index.
     pub fn write(&mut self, entry: &Entry) -> anyhow::Result<()> {
         let offset = self.file.write_entry_with_header(entry)?;
         self.index.insert(entry.k().to_owned(), offset);
         Ok(())
     }
 
+    /// Reads the next entry from the current file cursor position.
     pub fn read_next(&mut self) -> anyhow::Result<Option<Entry>> {
         self.file.read_next_entry_with_header()
     }
 
+    /// Compacts the log by deduplicating entries into a new file, then swaps it in.
     pub fn merge(&mut self) -> anyhow::Result<()> {
         let mut entries = HashMap::<String, Entry>::new();
         self.file.seek(SeekFrom::Start(0))?;
@@ -62,11 +69,13 @@ impl Log {
 
         rename(TEMP_PATH, STD_PATH)?;
 
+        // Reuse temp's already-built index to avoid a redundant scan.
         *self = temp;
 
         Ok(())
     }
 
+    /// Returns the file size in megabytes.
     pub fn megabytes(&self) -> anyhow::Result<u64> {
         Ok(self.file.metadata()?.len() / (1 << 20))
     }
