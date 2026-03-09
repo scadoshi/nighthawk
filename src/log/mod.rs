@@ -37,10 +37,15 @@ impl Log {
         Ok(Self { file, index })
     }
 
-    /// Appends an entry to the log and updates the index.
+    /// Appends an entry to the log updating the index if it was an `Entry::Set { .. }`.
     pub fn write(&mut self, entry: &Entry) -> anyhow::Result<()> {
-        let offset = self.file.write_entry_with_header(entry)?;
-        self.index.insert(entry.k().to_owned(), offset);
+        let wrote_at = self.file.write_entry_with_header(entry)?;
+        match entry {
+            Entry::Set { .. } => {
+                self.index.insert(entry.k().to_owned(), wrote_at);
+            }
+            Entry::Delete { .. } => (),
+        };
         Ok(())
     }
 
