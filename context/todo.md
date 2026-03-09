@@ -10,6 +10,11 @@ scans byte-by-byte for next valid magic + CRC match. See `src/log/header.rs`.
 ### Remaining tasks
 
 - [ ] Consider: `std::io::BufWriter` for batching writes (optional optimization)
+- [ ] Fix merge trigger — currently merges on every command once file hits 10MB of unique data.
+  Use ratio-based trigger: merge when file_size / post-merge size > threshold.
+- [ ] Add `tracing` and `tracing-subscriber` — instrument read/write/merge/index rebuild
+  with structured logging to console. Replace ad-hoc printlns with proper log levels.
+- [ ] Documentation pass — add doc comments (`///`) across all public types, traits, and methods
 - [ ] Decide if Phase 3 is complete or if there's more to polish
 
 ### Architecture notes
