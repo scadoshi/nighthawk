@@ -63,7 +63,6 @@ impl Log {
         rename(TEMP_PATH, STD_PATH)?;
 
         *self = temp;
-        self.file = OpenOptions::new().read(true).write(true).open(STD_PATH)?;
 
         Ok(())
     }
