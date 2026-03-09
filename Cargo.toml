@@ -5,5 +5,6 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
+crc32fast = "1.5.0"
 thiserror = "2.0.18"
 wincode = { version = "0.4.5", features = ["derive"] }
