@@ -1,10 +1,9 @@
-use std::io::{Read, Seek, SeekFrom, Write};
-
 use crate::{
     log::{Log, entry::Entry},
     tui,
 };
 use anyhow::anyhow;
+use std::io::{Seek, SeekFrom};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -96,13 +95,8 @@ impl Execute for Log {
     fn execute(&mut self, command: Command) -> anyhow::Result<()> {
         match command {
             Command::Set { k, v } => {
-                self.file.seek(SeekFrom::End(0))?;
-                let offset = self.file.stream_position()?;
                 let entry = Entry::Set { k, v };
-                let bytes = wincode::serialize(&entry)?;
-                self.file.write_all(&bytes)?;
-                self.file.sync_all()?;
-                self.index.insert(entry.k().to_owned(), offset);
+                self.write(&entry)?;
                 println!("{} => {}", entry.k(), entry.v().unwrap());
             }
             Command::Get { k } => {
@@ -111,24 +105,18 @@ impl Execute for Log {
                     return Ok(());
                 };
                 self.file.seek(SeekFrom::Start(offset))?;
-                let mut bytes = Vec::<u8>::new();
-                self.file.read_to_end(&mut bytes)?;
-                let Entry::Set { v, .. } = wincode::deserialize::<Entry>(&bytes)? else {
-                    return Err(anyhow!(
-                        "Entry at offset {} expected to return `Entry::Set {{ .. }}` but did not. Log likely corrupted.",
-                        offset
-                    ));
+                match self.read_next()? {
+                    Some(Entry::Set { v, .. }) => println!("{} => {}", k, v),
+                    Some(Entry::Delete { .. }) | None => {
+                        return Err(anyhow!("Entry at offset {} corrupted.", offset,));
+                    }
                 };
-                println!("{} => {}", k, v);
             }
             Command::Delete { k } => {
                 match self.index.remove(&k) {
                     Some(_) => {
-                        self.file.seek(SeekFrom::End(0))?;
                         let entry = Entry::Delete { k };
-                        let bytes = wincode::serialize(&entry)?;
-                        self.file.write_all(&bytes)?;
-                        self.file.sync_all()?;
+                        self.write(&entry)?;
                         println!("{} deleted", entry.k())
                     }
                     None => println!("{} not found", k),

@@ -1,37 +1,25 @@
-use super::entry::Entry;
-use std::{collections::HashMap, fs::File, io::Read};
+use super::{entry::Entry, header::Header};
+use std::{collections::HashMap, fs::File, io::Seek};
 
-pub type Index = HashMap<String, u64>;
-
-pub trait IndexOps {
-    fn from_file(buf: &mut File) -> anyhow::Result<Index>;
+pub trait Index {
+    fn from_file(buf: &mut File) -> anyhow::Result<Self>
+    where
+        Self: Sized;
 }
 
-impl IndexOps for Index {
-    fn from_file(buf: &mut File) -> anyhow::Result<Index> {
-        let mut bytes = Vec::<u8>::new();
-        buf.read_to_end(&mut bytes)?;
-
+impl Index for HashMap<String, u64> {
+    fn from_file(file: &mut File) -> anyhow::Result<Self> {
         let mut index = HashMap::<String, u64>::new();
-        let mut offset: u64 = 0;
-
-        while (offset as usize) < bytes.len() {
-            let slice = &bytes[offset as usize..];
-            match wincode::deserialize::<Entry>(slice) {
-                Ok(entry @ Entry::Set { .. }) => {
-                    let size = wincode::serialized_size(&entry)?;
-                    index.insert(entry.k().to_owned(), offset);
-                    offset += size;
-                }
-                Ok(entry @ Entry::Delete { .. }) => {
-                    let size = wincode::serialized_size(&entry)?;
-                    index.remove(entry.k());
-                    offset += size;
-                }
+        file.seek(std::io::SeekFrom::Start(0))?;
+        loop {
+            let offset = file.stream_position()?;
+            match file.read_next_entry_with_header() {
+                Ok(Some(Entry::Set { k, .. })) => index.insert(k, offset),
+                Ok(Some(Entry::Delete { k })) => index.remove(&k),
+                Ok(None) => break,
                 Err(_) => break,
-            }
+            };
         }
-
         Ok(index)
     }
 }

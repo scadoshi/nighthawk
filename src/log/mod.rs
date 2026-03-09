@@ -1,82 +1,69 @@
 pub mod command;
 pub mod entry;
+pub mod header;
 pub mod index;
 
 use entry::Entry;
-use index::{Index, IndexOps};
+use header::Header;
+use index::Index;
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions, rename},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{Seek, SeekFrom},
 };
 
 #[derive(Debug)]
 pub struct Log {
     file: File,
-    index: Index,
+    index: HashMap<String, u64>,
 }
 
-pub const DATA_PATH: &str = "data.log";
+pub const STD_PATH: &str = "data.log";
 pub const TEMP_PATH: &str = "temp.log";
 
 impl Log {
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new(path: &str, truncate: bool) -> anyhow::Result<Self> {
         let mut file = OpenOptions::new()
             .create(true)
-            .truncate(false)
+            .truncate(truncate)
             .read(true)
             .write(true)
-            .open(DATA_PATH)?;
+            .open(path)?;
         let index = Index::from_file(&mut file)?;
         Ok(Self { file, index })
     }
 
+    pub fn write(&mut self, entry: &Entry) -> anyhow::Result<()> {
+        let offset = self.file.write_entry_with_header(entry)?;
+        self.index.insert(entry.k().to_owned(), offset);
+        Ok(())
+    }
+
+    pub fn read_next(&mut self) -> anyhow::Result<Option<Entry>> {
+        self.file.read_next_entry_with_header()
+    }
+
     pub fn merge(&mut self) -> anyhow::Result<()> {
-        let mut temp = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .read(true)
-            .write(true)
-            .open(TEMP_PATH)?;
-
-        let mut bytes = Vec::<u8>::new();
-        self.file.seek(SeekFrom::Start(0))?;
-        self.file.read_to_end(&mut bytes)?;
-
         let mut entries = HashMap::<String, Entry>::new();
-        let mut offset: u64 = 0;
-
-        while (offset as usize) < bytes.len() {
-            let slice = &bytes[offset as usize..];
-            match wincode::deserialize::<Entry>(slice) {
-                Ok(entry @ Entry::Set { .. }) => {
-                    let size = wincode::serialized_size(&entry)?;
-                    entries.insert(entry.k().to_owned(), entry);
-                    offset += size;
-                }
-                Ok(entry @ Entry::Delete { .. }) => {
-                    let size = wincode::serialized_size(&entry)?;
-                    entries.remove(entry.k());
-                    offset += size;
-                }
-                Err(_) => break,
-            }
+        self.file.seek(SeekFrom::Start(0))?;
+        loop {
+            match self.read_next() {
+                Ok(Some(entry @ Entry::Set { .. })) => entries.insert(entry.k().to_owned(), entry),
+                Ok(Some(entry @ Entry::Delete { .. })) => entries.remove(entry.k()),
+                Ok(None) => break, // reached end of file
+                Err(_) => break,   // handle this later
+            };
         }
 
-        self.index.clear();
-        let mut offset: u64 = 0;
+        let mut temp = Log::new(TEMP_PATH, true)?;
         for entry in entries.values() {
-            let bytes = wincode::serialize(&entry)?;
-            temp.write_all(&bytes)?;
-            self.index.insert(entry.k().to_owned(), offset);
-            offset += bytes.len() as u64;
+            temp.write(entry)?;
         }
 
-        temp.sync_all()?;
+        rename(TEMP_PATH, STD_PATH)?;
 
-        rename(TEMP_PATH, DATA_PATH)?;
-
-        self.file = OpenOptions::new().read(true).write(true).open(DATA_PATH)?;
+        *self = temp;
+        self.file = OpenOptions::new().read(true).write(true).open(STD_PATH)?;
 
         Ok(())
     }

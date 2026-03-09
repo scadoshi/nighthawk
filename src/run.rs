@@ -5,10 +5,11 @@ use super::{
     },
     tui,
 };
+use crate::log::STD_PATH;
 
 pub fn run() -> anyhow::Result<()> {
     tui::welcome();
-    let mut log = Log::new()?;
+    let mut log = Log::new(STD_PATH, false)?;
     loop {
         let command = Command::unfallible_get();
         if matches!(command, Command::Quit) {
