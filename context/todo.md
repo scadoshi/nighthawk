@@ -10,7 +10,8 @@ See `src/log/header.rs` for on-disk format.
 - [ ] `std::io::BufWriter` — batch writes instead of hitting disk on every `write_all` call
 - [ ] Merge trigger improvement — ratio-based (file_size / unique_keys) instead of flat 10MB
 - [ ] `tracing` + `tracing-subscriber` — structured logging for read/write/merge/index rebuild
-- [ ] Tests — unit tests for `parse_entry`, index rebuild, merge correctness
+- [ ] Tests — `parse_entry` error paths (HeaderNotFound, MagicBytesNotFound, ChecksumMismatch, EntryParseError), then index rebuild and merge correctness
+  - Fix two bugs in existing happy-path test first (see progress.md)
 
 ## Phase 4 — SSTable / LSM-tree
 

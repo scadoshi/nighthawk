@@ -26,3 +26,41 @@ impl Entry {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entry_set_k_returns_key() {
+        let k = "k".to_string();
+        let entry = Entry::Set {
+            k: k.clone(),
+            v: "v".to_string(),
+        };
+        assert_eq!(entry.k(), k.as_str());
+    }
+
+    #[test]
+    fn entry_delete_k_returns_key() {
+        let k = "k".to_string();
+        let entry = Entry::Delete { k: k.clone() };
+        assert_eq!(entry.k(), k);
+    }
+
+    #[test]
+    fn entry_set_v_returns_value() {
+        let v = "v".to_string();
+        let entry = Entry::Set {
+            k: "k".to_string(),
+            v: v.clone(),
+        };
+        assert_eq!(entry.v(), Some(v.as_str()));
+    }
+
+    #[test]
+    fn entry_delete_v_returns_none() {
+        let entry = Entry::Delete { k: "k".to_string() };
+        assert_eq!(entry.v(), None);
+    }
+}

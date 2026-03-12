@@ -27,7 +27,9 @@
 - [x] Quit command with clean loop exit (no `process::exit`)
 - [x] Command shorthand aliases (s/g/d/q) and variable-arity parsing
 
-## Phase 3 — Binary serialization (IN PROGRESS)
+## Phase 3 — Binary serialization (COMPLETE)
+
+## Tests (IN PROGRESS)
 
 - [x] Added `crc32fast` dependency
 - [x] Defined header format: `[magic: 2 bytes][crc32: 4 bytes][entry_len: 4 bytes]` — 10 bytes total
@@ -45,3 +47,11 @@
 - [x] `Log::new` takes `path` and `truncate` params — used by merge to create clean temp files
 - [x] Learned `u32::to_le_bytes()` / `u32::from_le_bytes()` — little-endian byte encoding for header fields
 - [x] Learned endianness — LE stores least significant byte at lowest address, convention for on-disk formats (x86/ARM native)
+
+## Tests (IN PROGRESS)
+
+- [x] `Entry::k()` and `Entry::v()` — 4 unit tests in `src/log/entry.rs`, one behavior per test, descriptive names
+- [ ] `parse_entry` — happy path started in `src/log/header.rs`, has two bugs to fix before passing:
+  - `entry_bytes.len().to_le_bytes()` must be cast to `u32` first (usize = 8 bytes, header expects 4)
+  - `consumed` assertion uses `bytes.len() + 10` but header is already inside `bytes`, should be `bytes.len()`
+- [ ] `parse_entry` error paths — HeaderNotFound, MagicBytesNotFound, ChecksumMismatch, EntryParseError

@@ -114,3 +114,52 @@ impl Header for File {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_entry_set_ok() {
+        let k = "k".to_string();
+        let v = "v".to_string();
+        let entry = Entry::Set {
+            k: k.clone(),
+            v: v.clone(),
+        };
+        let entry_bytes = wincode::serialize(&entry).unwrap();
+        let checksum = crc32fast::hash(&entry_bytes);
+        let len = entry_bytes.len() as u32;
+        let mut bytes = Vec::<u8>::new();
+        bytes.extend(MAGIC.to_le_bytes());
+        bytes.extend(checksum.to_le_bytes());
+        bytes.extend(len.to_le_bytes());
+        bytes.extend(entry_bytes);
+        let result = parse_entry(bytes.as_slice());
+        assert!(matches!(result, Ok((Entry::Set { .. }, _))));
+        let (resulting_entry, consumed) = result.unwrap();
+        assert_eq!(resulting_entry.k(), k.as_str());
+        assert_eq!(resulting_entry.v(), Some(v.as_str()));
+        assert_eq!(consumed, len as usize + 10);
+    }
+
+    #[test]
+    fn parse_entry_delete_ok() {
+        let k = "k".to_string();
+        let entry = Entry::Delete { k: k.clone() };
+        let entry_bytes = wincode::serialize(&entry).unwrap();
+        let checksum = crc32fast::hash(&entry_bytes);
+        let len = entry_bytes.len() as u32;
+        let mut bytes = Vec::<u8>::new();
+        bytes.extend(MAGIC.to_le_bytes());
+        bytes.extend(checksum.to_le_bytes());
+        bytes.extend(len.to_le_bytes());
+        bytes.extend(entry_bytes);
+        let result = parse_entry(bytes.as_slice());
+        assert!(matches!(result, Ok((Entry::Delete { .. }, _))));
+        let (resulting_entry, consumed) = result.unwrap();
+        assert_eq!(resulting_entry.k(), k.as_str());
+        assert_eq!(resulting_entry.v(), None);
+        assert_eq!(consumed, len as usize + 10);
+    }
+}
