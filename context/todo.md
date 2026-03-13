@@ -58,5 +58,8 @@ Key files:
 - ~~`u32::to_le_bytes()` / `u32::from_le_bytes()`~~ — learned in Phase 3
 - `BTreeMap` — sorted in-memory structure needed for Phase 4 memtable
 - ~~`std::io::BufWriter`~~ — learned and used in merge for batched writes
-- Bloom filters — probabilistic data structure for fast negative lookups
 - SSTable format — sorted string table, on-disk sorted key-value segments
+- LSM-tree architecture — how memtable flushes, levels, and compaction fit together
+- Sorted merge (k-way merge) — merging multiple sorted SSTable files into one
+- Bloom filters — probabilistic data structure for fast negative lookups (hash functions, false positive rate, bit array sizing)
+- Sparse index / index block — how SSTables avoid indexing every key (binary search between index points)

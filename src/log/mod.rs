@@ -24,7 +24,8 @@ pub struct Log {
 pub const STD_PATH: &str = "data.log";
 
 impl Log {
-    /// Opens or creates a log file and rebuilds the index from its contents.
+    /// Opens or creates a log file and rebuilds the index from its contents. Takes truncate flag
+    /// informing whether to overwrite or append existing file content.
     pub fn new(path: &str, truncate: bool) -> anyhow::Result<Self> {
         let mut file = OpenOptions::new()
             .create(true)
