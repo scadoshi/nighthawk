@@ -29,8 +29,6 @@
 
 ## Phase 3 — Binary serialization (COMPLETE)
 
-## Phase 3 — Binary serialization (COMPLETE)
-
 - [x] Added `crc32fast` dependency
 - [x] Defined header format: `[magic: 2 bytes][crc32: 4 bytes][entry_len: 4 bytes]` — 10 bytes total
 - [x] Magic bytes: `0x4E48` ("NH") as u16
@@ -66,4 +64,13 @@
 - [x] Fixed `EntryParseError` tests to use correctly-sized garbage payloads
 - [x] Refactored command parser from `if/else if` chain to `match` on `&str`
 - [x] Added `tempfile` as dev-dependency for file I/O tests
-- [x] 68 tests total, all passing
+- [x] Split `Header` into `HeaderWriter` (Write+Seek) and `HeaderReader` (Read+Seek) for generic I/O
+- [x] Refactored write as thin file layer (append + sync, returns offset), index updates moved to Execute
+- [x] BufWriter in merge — N entries buffered, single flush + sync before rename
+- [x] Merge reopens via `Log::new` after rename to rebuild index from compacted file
+- [x] Updated tests: write_returns_offset, write_does_not_modify_index, write_then_read_returns_entry
+- [x] Refactored `Index` from trait on `HashMap` to struct with `Deref`/`DerefMut` — `inner` convention, `entry_count` tracking
+- [x] Ratio-based merge triggering — `should_merge()` checks `entry_count / unique_keys > 2`, replacing flat 10MB `megabytes()` check
+- [x] `track_write()` increments `entry_count` after each disk write, called from `Execute`
+- [x] Index tests: `entry_count` includes all entries, `track_write` increments, `should_merge` empty/low/boundary/exceeds
+- [x] 72 tests total, all passing

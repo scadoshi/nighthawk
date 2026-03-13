@@ -113,6 +113,7 @@ impl Execute for Log {
                 let entry = Entry::Set { k, v };
                 let wrote_at = self.write(&entry)?;
                 self.index.insert(entry.k().to_owned(), wrote_at);
+                self.index.track_write();
                 println!("{} => {}", entry.k(), entry.v().unwrap());
             }
             Command::Get { k } => {
@@ -134,6 +135,7 @@ impl Execute for Log {
                     let entry = Entry::Delete { k };
                     self.write(&entry)?;
                     self.index.remove(entry.k());
+                    self.index.track_write();
                     println!("{} deleted", entry.k());
                 } else {
                     println!("{} not found", k);
@@ -147,7 +149,7 @@ impl Execute for Log {
             }
         }
 
-        if self.megabytes()? > 10 {
+        if self.index.should_merge() {
             self.merge()?
         }
 

@@ -7,11 +7,12 @@ See `src/log/header.rs` for on-disk format.
 
 ## Optional polish (pick any, or skip to Phase 4)
 
-- [ ] `std::io::BufWriter` — batch writes instead of hitting disk on every `write_all` call
-- [ ] Merge trigger improvement — ratio-based (file_size / unique_keys) instead of flat 10MB
-- [ ] `tracing` + `tracing-subscriber` — structured logging for read/write/merge/index rebuild
+- [x] `std::io::BufWriter` — merge writes through BufWriter with single flush + sync
 - [x] Refactor `merge` to accept paths — `merge` now derives temp path from `self.path`
 - [x] Merge correctness tests — deduplication, delete handling, file shrink, empty log, index offset validity
+- [x] Split `Header` into `HeaderWriter` (Write+Seek) and `HeaderReader` (Read+Seek)
+- [x] Refactored write/index responsibilities — write is thin file layer, execute owns index
+- [x] Merge trigger improvement — ratio-based (`entry_count / unique_keys > 2`) replacing flat 10MB check
 
 ## Phase 4 — SSTable / LSM-tree
 
@@ -41,9 +42,9 @@ Entry format on disk:
 ```
 
 Key files:
-- `src/log/header.rs` — `Header` trait on `File`, `EntryWithHeader` trait on `Entry`, `TryIntoEntryWithLen` trait on `[u8]`, `CorruptionType` enum
+- `src/log/header.rs` — `HeaderWriter` (Write+Seek), `HeaderReader` (Read+Seek), `EntryWithHeader` trait on `Entry`, `TryIntoEntryWithLen` trait on `[u8]`, `CorruptionType` enum
 - `src/log/mod.rs` — `Log` struct with `write`/`read_next`/`merge`, delegates to header traits
-- `src/log/index.rs` — `Index` trait on `HashMap<String, u64>`, rebuilds from file using header-aware reads
+- `src/log/index.rs` — `Index` struct wrapping `HashMap<String, u64>` via `Deref`/`DerefMut`, tracks `entry_count` for ratio-based merge triggering
 - `src/log/command.rs` — `Execute` trait on `Log`, REPL command handling
 - `src/log/entry.rs` — `Entry` enum (Set/Delete)
 
@@ -56,6 +57,6 @@ Key files:
 - ~~CRC32 checksums (`crc32fast` crate)~~ — learned and implemented in Phase 3
 - ~~`u32::to_le_bytes()` / `u32::from_le_bytes()`~~ — learned in Phase 3
 - `BTreeMap` — sorted in-memory structure needed for Phase 4 memtable
-- `std::io::BufWriter` — batching writes for better performance
+- ~~`std::io::BufWriter`~~ — learned and used in merge for batched writes
 - Bloom filters — probabilistic data structure for fast negative lookups
 - SSTable format — sorted string table, on-disk sorted key-value segments

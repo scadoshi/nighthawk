@@ -17,7 +17,7 @@ use std::{
 pub struct Log {
     file: File,
     path: String,
-    index: HashMap<String, u64>,
+    index: Index,
 }
 
 /// Default log file path.
@@ -84,11 +84,6 @@ impl Log {
 
         Ok(())
     }
-
-    /// Returns the file size in megabytes.
-    pub fn megabytes(&self) -> anyhow::Result<u64> {
-        Ok(self.file.metadata()?.len() / (1 << 20))
-    }
 }
 
 #[cfg(test)]
@@ -149,12 +144,6 @@ mod tests {
         let (mut log, _dir) = temp_log();
         let result = log.read_next().unwrap();
         assert!(result.is_none());
-    }
-
-    #[test]
-    fn megabytes_empty_file_is_zero() {
-        let (log, _dir) = temp_log();
-        assert_eq!(log.megabytes().unwrap(), 0);
     }
 
     #[test]
