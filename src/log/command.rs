@@ -111,7 +111,8 @@ impl Execute for Log {
         match command {
             Command::Set { k, v } => {
                 let entry = Entry::Set { k, v };
-                self.write(&entry)?;
+                let wrote_at = self.write(&entry)?;
+                self.index.insert(entry.k().to_owned(), wrote_at);
                 println!("{} => {}", entry.k(), entry.v().unwrap());
             }
             Command::Get { k } => {

@@ -4,12 +4,12 @@ pub mod header;
 pub mod index;
 
 use entry::Entry;
-use header::Header;
+use header::{HeaderReader, HeaderWriter};
 use index::Index;
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions, rename},
-    io::{Seek, SeekFrom},
+    io::{BufWriter, Seek, SeekFrom, Write},
 };
 
 /// Append-only log store. Owns the data file and in-memory key-to-offset index.
@@ -40,16 +40,11 @@ impl Log {
         })
     }
 
-    /// Appends an entry to the log updating the index if it was an `Entry::Set { .. }`.
-    pub fn write(&mut self, entry: &Entry) -> anyhow::Result<()> {
+    /// Appends an entry with header to end of file in [`Log`]. Returns the byte offset where it was written.
+    pub fn write(&mut self, entry: &Entry) -> anyhow::Result<u64> {
         let wrote_at = self.file.write_entry_with_header(entry)?;
-        match entry {
-            Entry::Set { .. } => {
-                self.index.insert(entry.k().to_owned(), wrote_at);
-            }
-            Entry::Delete { .. } => (),
-        };
-        Ok(())
+        self.file.sync_all()?;
+        Ok(wrote_at)
     }
 
     /// Reads the next entry from the current file cursor position.
@@ -71,16 +66,21 @@ impl Log {
         }
 
         let temp_path = format!("{}.tmp", self.path);
-        let mut temp = Log::new(&temp_path, true)?;
+        let temp_file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(&temp_path)?;
+        let mut writer = BufWriter::new(&temp_file);
         for entry in entries.values() {
-            temp.write(entry)?;
+            writer.write_entry_with_header(entry)?;
         }
+        writer.flush()?;
+        temp_file.sync_all()?;
 
         rename(&temp_path, &self.path)?;
-        temp.path = self.path.clone();
-
-        // Reuse temp's already-built index to avoid a redundant scan.
-        *self = temp;
+        *self = Log::new(&self.path, false)?;
 
         Ok(())
     }
@@ -109,27 +109,18 @@ mod tests {
     }
 
     #[test]
-    fn write_set_adds_to_index() {
+    fn write_returns_offset() {
         let (mut log, _dir) = temp_log();
         let entry = Entry::Set {
             k: "a".to_string(),
             v: "1".to_string(),
         };
-        log.write(&entry).unwrap();
-        assert_eq!(log.index.len(), 1);
-        assert!(log.index.contains_key("a"));
+        let offset = log.write(&entry).unwrap();
+        assert_eq!(offset, 0);
     }
 
     #[test]
-    fn write_delete_does_not_add_to_index() {
-        let (mut log, _dir) = temp_log();
-        let entry = Entry::Delete { k: "a".to_string() };
-        log.write(&entry).unwrap();
-        assert!(log.index.is_empty());
-    }
-
-    #[test]
-    fn write_set_then_read_returns_entry() {
+    fn write_then_read_returns_entry() {
         let (mut log, _dir) = temp_log();
         let entry = Entry::Set {
             k: "a".to_string(),
@@ -143,22 +134,14 @@ mod tests {
     }
 
     #[test]
-    fn write_overwrite_updates_index_offset() {
+    fn write_does_not_modify_index() {
         let (mut log, _dir) = temp_log();
-        let first = Entry::Set {
+        let entry = Entry::Set {
             k: "a".to_string(),
             v: "1".to_string(),
         };
-        let second = Entry::Set {
-            k: "a".to_string(),
-            v: "2".to_string(),
-        };
-        log.write(&first).unwrap();
-        let first_offset = log.index["a"];
-        log.write(&second).unwrap();
-        let second_offset = log.index["a"];
-        assert_ne!(first_offset, second_offset);
-        assert_eq!(log.index.len(), 1);
+        log.write(&entry).unwrap();
+        assert!(log.index.is_empty());
     }
 
     #[test]

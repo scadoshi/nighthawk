@@ -1,8 +1,5 @@
 use crate::log::entry::Entry;
-use std::{
-    fs::File,
-    io::{Read, Seek, SeekFrom, Write},
-};
+use std::io::{Read, Seek, SeekFrom, Write};
 use thiserror::Error;
 
 /// Size of the entry header in bytes: magic (2) + crc32 (4) + entry_len (4).
@@ -28,28 +25,41 @@ pub enum CorruptionType {
     EntryParseError,
 }
 
-/// Read/write entries with the on-disk header format:
+/// Write entries with the on-disk header format:
 /// `[magic: 2B][crc32: 4B][entry_len: 4B][wincode-serialized Entry]`
-pub trait Header {
+pub trait HeaderWriter {
     /// Appends an entry with header to end of file. Returns the byte offset where it was written.
     fn write_entry_with_header(&mut self, entry: &Entry) -> anyhow::Result<u64>;
+}
+
+impl<W: Write + Seek> HeaderWriter for W {
+    fn write_entry_with_header(&mut self, entry: &Entry) -> anyhow::Result<u64> {
+        self.seek(SeekFrom::End(0))?;
+        let wrote_at = self.stream_position()?;
+        self.write_all(entry.try_into_bytes_with_header()?.as_slice())?;
+        Ok(wrote_at)
+    }
+}
+
+/// Read entries with the on-disk header format:
+/// `[magic: 2B][crc32: 4B][entry_len: 4B][wincode-serialized Entry]`
+pub trait HeaderReader {
     /// Reads the next valid entry from the current cursor position.
     /// Scans byte-by-byte on corruption to find the next valid magic + checksum match.
     fn read_next_entry_with_header(&mut self) -> anyhow::Result<Option<Entry>>;
 }
 
-impl Header for File {
-    fn write_entry_with_header(&mut self, entry: &Entry) -> anyhow::Result<u64> {
-        self.seek(SeekFrom::End(0))?;
-        let wrote_at = self.stream_position()?;
-        self.write_all(entry.try_into_bytes_with_header()?.as_slice())?;
-        self.sync_all()?;
-        Ok(wrote_at)
-    }
-
+impl<R: Read + Seek> HeaderReader for R {
     fn read_next_entry_with_header(&mut self) -> anyhow::Result<Option<Entry>> {
-        let start = self.stream_position()?;
-        if start >= self.metadata()?.len() {
+        let start_from = self.stream_position()?;
+        let buf_len = {
+            self.seek(SeekFrom::Start(0))?;
+            let mut bytes = Vec::<u8>::new();
+            self.read_to_end(&mut bytes)?;
+            self.seek(SeekFrom::Start(start_from))?;
+            bytes.len() as u64
+        };
+        if start_from >= buf_len {
             return Ok(None);
         }
         let mut bytes = Vec::<u8>::new();
@@ -58,7 +68,7 @@ impl Header for File {
         while p < bytes.len() {
             match bytes[p..].try_into_entry_with_len() {
                 Ok((entry, len)) => {
-                    self.seek(SeekFrom::Start(start + p as u64 + len as u64))?;
+                    self.seek(SeekFrom::Start(start_from + p as u64 + len as u64))?;
                     return Ok(Some(entry));
                 }
                 // Corruption recovery: advance one byte and retry.
@@ -92,7 +102,7 @@ impl EntryWithHeader for Entry {
 
 /// Parses a header + entry from a byte slice.
 trait TryIntoEntryWithLen {
-    /// Returns the parsed entry and total bytes consumed, or a [`CorruptionType`] on failure.
+    /// Returns the parsed entry and total length of header + entry, or a [`CorruptionType`] on failure.
     fn try_into_entry_with_len(&self) -> Result<(Entry, usize), CorruptionType>;
 }
 

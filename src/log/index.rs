@@ -1,4 +1,4 @@
-use super::{entry::Entry, header::Header};
+use super::{entry::Entry, header::HeaderReader};
 use std::{collections::HashMap, fs::File, io::Seek};
 
 /// Builds a key-to-offset index by scanning a log file.
@@ -29,6 +29,7 @@ impl Index for HashMap<String, u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::log::header::HeaderWriter;
 
     #[test]
     fn from_file_empty() {
