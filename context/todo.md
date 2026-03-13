@@ -10,8 +10,8 @@ See `src/log/header.rs` for on-disk format.
 - [ ] `std::io::BufWriter` — batch writes instead of hitting disk on every `write_all` call
 - [ ] Merge trigger improvement — ratio-based (file_size / unique_keys) instead of flat 10MB
 - [ ] `tracing` + `tracing-subscriber` — structured logging for read/write/merge/index rebuild
-- [ ] Tests — `parse_entry` error paths (HeaderNotFound, MagicBytesNotFound, ChecksumMismatch, EntryParseError), then index rebuild and merge correctness
-  - Fix two bugs in existing happy-path test first (see progress.md)
+- [x] Refactor `merge` to accept paths — `merge` now derives temp path from `self.path`
+- [x] Merge correctness tests — deduplication, delete handling, file shrink, empty log, index offset validity
 
 ## Phase 4 — SSTable / LSM-tree
 
@@ -41,8 +41,8 @@ Entry format on disk:
 ```
 
 Key files:
-- `src/log/header.rs` — `Header` trait on `File`, `parse_entry` standalone fn, `CorruptionType` enum
-- `src/log/mod.rs` — `Log` struct with `write`/`read_next`/`merge`, delegates to header trait
+- `src/log/header.rs` — `Header` trait on `File`, `EntryWithHeader` trait on `Entry`, `TryIntoEntryWithLen` trait on `[u8]`, `CorruptionType` enum
+- `src/log/mod.rs` — `Log` struct with `write`/`read_next`/`merge`, delegates to header traits
 - `src/log/index.rs` — `Index` trait on `HashMap<String, u64>`, rebuilds from file using header-aware reads
 - `src/log/command.rs` — `Execute` trait on `Log`, REPL command handling
 - `src/log/entry.rs` — `Entry` enum (Set/Delete)

@@ -119,7 +119,7 @@ impl TryIntoEntryWithLen for [u8] {
         p += 4;
         // entry
         if self.len() < HEADER_LEN as usize + len as usize {
-            return Err(CorruptionType::EntryParseError);
+            return Err(CorruptionType::NotEnoughBytes);
         }
         let entry_bytes = &self[p..p + len as usize];
         if checksum != crc32fast::hash(entry_bytes) {
@@ -205,11 +205,12 @@ mod tests {
 
     #[test]
     fn try_into_entry_with_header_set_err_entry_parse_error() {
+        // Garbage payload the same length as the real entry so it passes the length check.
         let (entry, _, _) = create_entry_set_with_expected_parts();
-        let entry_bytes = wincode::serialize(&entry).unwrap();
-        let checksum = crc32fast::hash(&entry_bytes);
-        let len = entry_bytes.len() as u32;
-        let bytes = entry_bytes_from_parts(MAGIC, checksum, len, 0_u32.to_le_bytes().as_slice());
+        let real_len = wincode::serialize(&entry).unwrap().len();
+        let garbage = vec![0xFF; real_len];
+        let checksum = crc32fast::hash(&garbage);
+        let bytes = entry_bytes_from_parts(MAGIC, checksum, real_len as u32, &garbage);
         let result = bytes.try_into_entry_with_len();
         assert!(matches!(result, Err(CorruptionType::EntryParseError)));
     }
@@ -254,11 +255,69 @@ mod tests {
     #[test]
     fn try_into_entry_with_header_delete_err_entry_parse_error() {
         let (entry, _) = create_entry_delete_with_expected_parts();
-        let entry_bytes = wincode::serialize(&entry).unwrap();
-        let checksum = crc32fast::hash(&entry_bytes);
-        let len = entry_bytes.len() as u32;
-        let bytes = entry_bytes_from_parts(MAGIC, checksum, len, 0_u32.to_le_bytes().as_slice());
+        let real_len = wincode::serialize(&entry).unwrap().len();
+        let garbage = vec![0xFF; real_len];
+        let checksum = crc32fast::hash(&garbage);
+        let bytes = entry_bytes_from_parts(MAGIC, checksum, real_len as u32, &garbage);
         let result = bytes.try_into_entry_with_len();
         assert!(matches!(result, Err(CorruptionType::EntryParseError)));
+    }
+
+    #[test]
+    fn write_entry_with_header_set_ok() {
+        let mut file = tempfile::tempfile().unwrap();
+        let (entry, _, _) = create_entry_set_with_expected_parts();
+        let result = file.write_entry_with_header(&entry);
+        assert!(result.is_ok());
+        let wrote_at = result.unwrap();
+        assert_eq!(wrote_at, 0);
+    }
+
+    #[test]
+    fn write_entry_with_header_set_ok_then_read() {
+        let mut file = tempfile::tempfile().unwrap();
+        let (entry, k, v) = create_entry_set_with_expected_parts();
+        let wrote_at = file.write_entry_with_header(&entry).unwrap();
+        assert_eq!(wrote_at, 0);
+        file.seek(SeekFrom::Start(wrote_at)).unwrap();
+        let result = file.read_next_entry_with_header().unwrap().unwrap();
+        assert_eq!(result.k(), k);
+        assert_eq!(result.v(), Some(v.as_str()));
+    }
+
+    #[test]
+    fn write_entry_with_header_delete_ok() {
+        let mut file = tempfile::tempfile().unwrap();
+        let (entry, _) = create_entry_delete_with_expected_parts();
+        let result = file.write_entry_with_header(&entry);
+        assert!(result.is_ok());
+        let wrote_at = result.unwrap();
+        assert_eq!(wrote_at, 0);
+    }
+
+    #[test]
+    fn write_entry_with_header_delete_ok_then_read() {
+        let mut file = tempfile::tempfile().unwrap();
+        let (entry, k) = create_entry_delete_with_expected_parts();
+        let wrote_at = file.write_entry_with_header(&entry).unwrap();
+        assert_eq!(wrote_at, 0);
+        file.seek(SeekFrom::Start(wrote_at)).unwrap();
+        let result = file.read_next_entry_with_header().unwrap().unwrap();
+        assert_eq!(result.k(), k);
+    }
+
+    #[test]
+    fn read_next_entry_with_header_recovers_past_corruption() {
+        let mut file = tempfile::tempfile().unwrap();
+        // Write 7 bytes of garbage before a valid entry.
+        let garbage = [0xFF; 7];
+        file.write_all(&garbage).unwrap();
+        let (entry, k, v) = create_entry_set_with_expected_parts();
+        file.write_entry_with_header(&entry).unwrap();
+        // Seek to start — reader should skip garbage and find the entry.
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let result = file.read_next_entry_with_header().unwrap().unwrap();
+        assert_eq!(result.k(), k);
+        assert_eq!(result.v(), Some(v.as_str()));
     }
 }

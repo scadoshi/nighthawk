@@ -29,7 +29,7 @@
 
 ## Phase 3 — Binary serialization (COMPLETE)
 
-## Tests (IN PROGRESS)
+## Phase 3 — Binary serialization (COMPLETE)
 
 - [x] Added `crc32fast` dependency
 - [x] Defined header format: `[magic: 2 bytes][crc32: 4 bytes][entry_len: 4 bytes]` — 10 bytes total
@@ -39,7 +39,7 @@
 - [x] `parse_entry(&[u8])` — standalone function for parsing header + entry from a byte slice, no I/O
 - [x] `read_next_entry_with_header` — reads file once, scans in-memory byte-by-byte for next valid entry (corruption recovery)
 - [x] Bounds checking — guards against partial writes (not enough bytes for header or entry data)
-- [x] `CorruptionType` error enum — distinguishes HeaderNotFound, MagicNotFound, ChecksumNotMatch, EntryParseError
+- [x] `CorruptionType` error enum — `NotEnoughBytes`, `MagicBytesMismatch`, `ChecksumMismatch`, `EntryParseError`
 - [x] Updated `Log::write` and `Log::read_next` to delegate to header trait methods
 - [x] Updated `Execute` impl — Set/Delete use `Log::write`, Get uses `Log::read_next`
 - [x] Updated index rebuild (`from_file`) to use header-aware reading
@@ -48,10 +48,22 @@
 - [x] Learned `u32::to_le_bytes()` / `u32::from_le_bytes()` — little-endian byte encoding for header fields
 - [x] Learned endianness — LE stores least significant byte at lowest address, convention for on-disk formats (x86/ARM native)
 
-## Tests (IN PROGRESS)
+## Tests (COMPLETE)
 
-- [x] `Entry::k()` and `Entry::v()` — 4 unit tests in `src/log/entry.rs`, one behavior per test, descriptive names
-- [ ] `parse_entry` — happy path started in `src/log/header.rs`, has two bugs to fix before passing:
-  - `entry_bytes.len().to_le_bytes()` must be cast to `u32` first (usize = 8 bytes, header expects 4)
-  - `consumed` assertion uses `bytes.len() + 10` but header is already inside `bytes`, should be `bytes.len()`
-- [ ] `parse_entry` error paths — HeaderNotFound, MagicBytesNotFound, ChecksumMismatch, EntryParseError
+- [x] `Entry::k()` and `Entry::v()` — 4 unit tests in `src/log/entry.rs`
+- [x] Refactored `parse_entry` standalone fn into `TryIntoEntryWithLen` trait on `[u8]`
+- [x] Extracted serialization into `EntryWithHeader` trait on `Entry` — `write_entry_with_header` now delegates to `try_into_bytes_with_header`
+- [x] `TryIntoEntryWithLen` byte parsing — 9 tests: Set/Delete ok paths, NotEnoughBytes, MagicBytesMismatch, ChecksumMismatch, EntryParseError for both variants
+- [x] `CorruptionType` updated: removed `HeaderNotFound`, added `NotEnoughBytes`, renamed `MagicBytesNotFound` to `MagicBytesMismatch`
+- [x] Command parser (`TryFrom<&str>`) — 21 tests: every alias for set/get/delete/quit/help, plus MissingRequiredArguments, TooManyArguments, UnrecognizedCommand
+- [x] File I/O round-trips via `tempfile` — write then read for both Set and Delete entries
+- [x] Corruption recovery — write garbage bytes before a valid entry, assert reader scans past and finds it
+- [x] Index rebuild (`from_file`) — 6 tests: empty, single set, set+delete, overwrite keeps latest offset, multiple keys, delete nonexistent key
+- [x] `Log` integration tests — 14 tests: new creates empty index, write set/delete, read round-trip, overwrite updates offset, empty read returns None, megabytes, index rebuild on reopen, merge deduplication/delete handling/file shrink/empty/offset validity
+- [x] `Execute` integration tests — 9 tests: set/get/delete with existing and missing keys, delete tombstone persistence, overwrite updates value, quit/help no-ops
+- [x] Fixed delete-before-write bug — index removal now happens after tombstone write succeeds
+- [x] Fixed `NotEnoughBytes` error for truncated entries (was `EntryParseError`)
+- [x] Fixed `EntryParseError` tests to use correctly-sized garbage payloads
+- [x] Refactored command parser from `if/else if` chain to `match` on `&str`
+- [x] Added `tempfile` as dev-dependency for file I/O tests
+- [x] 68 tests total, all passing
