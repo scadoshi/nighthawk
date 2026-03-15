@@ -5,12 +5,12 @@ use super::{
     },
     tui,
 };
-use crate::log::MEMTABLE_PATH;
+use crate::log::{DATA_PATH, MEMTABLE_PATH, SSTABLES_PATH};
 
 /// Opens the log and runs the REPL until quit.
 pub fn run() -> anyhow::Result<()> {
     tui::welcome();
-    let mut log = Log::new(MEMTABLE_PATH, false)?;
+    let mut log = Log::new(DATA_PATH, MEMTABLE_PATH, SSTABLES_PATH, false)?;
     loop {
         let command = Command::unfallible_get();
         if matches!(command, Command::Quit) {
