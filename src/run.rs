@@ -1,11 +1,10 @@
 use super::{
     log::{
-        Log,
+        DATA_PATH, Log, MEMTABLE_PATH, SSTABLES_PATH,
         command::{Command, Execute},
     },
     tui,
 };
-use crate::log::{DATA_PATH, MEMTABLE_PATH, SSTABLES_PATH};
 
 /// Opens the log and runs the REPL until quit.
 pub fn run() -> anyhow::Result<()> {
