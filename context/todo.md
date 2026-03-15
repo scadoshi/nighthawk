@@ -16,11 +16,39 @@ See `src/log/header.rs` for on-disk format.
 
 ## Phase 4 — SSTable / LSM-tree
 
-- [ ] Replace `HashMap` index with `BTreeMap` memtable (sorted in-memory store)
-- [ ] Flush memtable to sorted on-disk segments (SSTables) when it reaches a size threshold
-- [ ] Read path: check memtable first, then search SSTables newest-to-oldest
-- [ ] Merge/compact SSTables in background (sorted merge of multiple segment files)
-- [ ] Bloom filters per SSTable for fast negative lookups (skip segments that definitely don't have the key)
+### Step 1 — Memtable (COMPLETE)
+- [x] Renamed `src/log/index.rs` → `src/log/memtable.rs`, `Index` → `MemTable`
+- [x] `MemTable` is `BTreeMap<String, Entry>` — stores values directly, not offsets
+- [x] Startup replays WAL into memtable via `MemTable::from_file`
+- [x] Write path: WAL write + `memtable.process(entry)`
+- [x] Read path: `memtable.get(&key)` — no file seek
+- [x] `process()` unifies insert/remove and tracks byte `size`
+- [x] `maybe_flush()` triggers `flush()` when `memtable.size() > 4MB`
+- [x] Renamed `Entry` fields `k`/`v` → `key`/`value`, methods `k()`/`v()` → `key()`/`value()` across all files
+- [x] Deleted `merge` — replaced by SSTable flush model
+
+### Step 2 — SSTable flush (COMPLETE)
+- [x] `flush()` — writes memtable sorted to `data/sstables/{timestamp:020}.sst`
+- [x] Timestamp filename: microsecond Unix epoch, zero-padded — lexicographic = chronological sort
+- [x] After flush: `sync_all()`, truncate WAL, clear memtable
+- [x] `maybe_flush()` wired into `Execute` after each command
+
+### Step 3 — SSTable read path (COMPLETE)
+- [x] `Log::get()` — checks memtable first, then scans SSTables newest-to-oldest
+- [x] Linear scan per SSTable file using `read_next_entry_with_header`
+- [x] `create_dir_all` guards `read_dir` so missing sstables dir doesn't panic
+- [x] Sort descending by filename (lexicographic = newest first)
+- [x] Wire `Log::get()` into `Execute` Get arm
+- [x] Placeholder tests added for SSTable read path, flush, maybe_flush — fill in with `#[ignore]` stubs
+
+### Step 4 — SSTable merge/compaction
+- [ ] Merge multiple SSTable files into one — sorted k-way merge
+- [ ] Drop deleted keys and superseded values during merge
+- [ ] Trigger merge when SSTable count exceeds threshold
+
+### Step 5 — Bloom filters
+- [ ] One bloom filter per SSTable — skip files that definitely don't contain the key
+- [ ] Learn: `bloomfilter` or `fastbloom` crate, or implement from scratch
 
 ## Phase 5 — Network layer
 
@@ -43,8 +71,8 @@ Entry format on disk:
 
 Key files:
 - `src/log/header.rs` — `HeaderWriter` (Write+Seek), `HeaderReader` (Read+Seek), `EntryWithHeader` trait on `Entry`, `TryIntoEntryWithLen` trait on `[u8]`, `CorruptionType` enum
-- `src/log/mod.rs` — `Log` struct with `write`/`read_next`/`merge`, delegates to header traits
-- `src/log/index.rs` — `Index` struct wrapping `HashMap<String, u64>` via `Deref`/`DerefMut`, tracks `entry_count` for ratio-based merge triggering
+- `src/log/mod.rs` — `Log` struct with `write`/`read_next`/`get`/`flush`/`maybe_flush`, delegates to header traits
+- `src/log/memtable.rs` — `MemTable` wrapping `BTreeMap<String, Entry>`, tracks byte `size`, `process()` for insert/remove
 - `src/log/command.rs` — `Execute` trait on `Log`, REPL command handling
 - `src/log/entry.rs` — `Entry` enum (Set/Delete)
 
@@ -56,7 +84,7 @@ Key files:
 - ~~`std::fs::File::sync_all()`~~ — learned and implemented in Phase 2
 - ~~CRC32 checksums (`crc32fast` crate)~~ — learned and implemented in Phase 3
 - ~~`u32::to_le_bytes()` / `u32::from_le_bytes()`~~ — learned in Phase 3
-- `BTreeMap` — sorted in-memory structure needed for Phase 4 memtable
+- ~~`BTreeMap`~~ — sorted in-memory structure, understood as ordered map for memtable
 - ~~`std::io::BufWriter`~~ — learned and used in merge for batched writes
 - SSTable format — sorted string table, on-disk sorted key-value segments
 - LSM-tree architecture — how memtable flushes, levels, and compaction fit together
