@@ -149,15 +149,15 @@ mod tests {
         let k = "k".to_string();
         let v = "v".to_string();
         let entry = Entry::Set {
-            k: k.clone(),
-            v: v.clone(),
+            key: k.clone(),
+            value: v.clone(),
         };
         (entry, k, v)
     }
 
     fn create_entry_delete_with_expected_parts() -> (Entry, String) {
         let k = "k".to_string();
-        let entry = Entry::Delete { k: k.clone() };
+        let entry = Entry::Delete { key: k.clone() };
         (entry, k)
     }
 
@@ -186,8 +186,8 @@ mod tests {
         let result = bytes.try_into_entry_with_len();
         assert!(matches!(result, Ok((Entry::Set { .. }, _))));
         let (resulting_entry, consumed) = result.unwrap();
-        assert_eq!(resulting_entry.k(), k.as_str());
-        assert_eq!(resulting_entry.v(), Some(v.as_str()));
+        assert_eq!(resulting_entry.key(), k.as_str());
+        assert_eq!(resulting_entry.value(), Some(v.as_str()));
         assert_eq!(consumed, len as usize + HEADER_LEN as usize);
     }
 
@@ -235,8 +235,8 @@ mod tests {
         let result = bytes.try_into_entry_with_len();
         assert!(matches!(result, Ok((Entry::Delete { .. }, _))));
         let (resulting_entry, consumed) = result.unwrap();
-        assert_eq!(resulting_entry.k(), k.as_str());
-        assert_eq!(resulting_entry.v(), None);
+        assert_eq!(resulting_entry.key(), k.as_str());
+        assert_eq!(resulting_entry.value(), None);
         assert_eq!(consumed, len as usize + HEADER_LEN as usize);
     }
 
@@ -291,8 +291,8 @@ mod tests {
         assert_eq!(wrote_at, 0);
         file.seek(SeekFrom::Start(wrote_at)).unwrap();
         let result = file.read_next_entry_with_header().unwrap().unwrap();
-        assert_eq!(result.k(), k);
-        assert_eq!(result.v(), Some(v.as_str()));
+        assert_eq!(result.key(), k);
+        assert_eq!(result.value(), Some(v.as_str()));
     }
 
     #[test]
@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(wrote_at, 0);
         file.seek(SeekFrom::Start(wrote_at)).unwrap();
         let result = file.read_next_entry_with_header().unwrap().unwrap();
-        assert_eq!(result.k(), k);
+        assert_eq!(result.key(), k);
     }
 
     #[test]
@@ -327,7 +327,7 @@ mod tests {
         // Seek to start — reader should skip garbage and find the entry.
         file.seek(SeekFrom::Start(0)).unwrap();
         let result = file.read_next_entry_with_header().unwrap().unwrap();
-        assert_eq!(result.k(), k);
-        assert_eq!(result.v(), Some(v.as_str()));
+        assert_eq!(result.key(), k);
+        assert_eq!(result.value(), Some(v.as_str()));
     }
 }

@@ -1,27 +1,27 @@
 use wincode::{SchemaRead, SchemaWrite};
 
 /// A key-value operation serialized to the log file.
-#[derive(Debug, SchemaRead, SchemaWrite)]
+#[derive(Debug, SchemaRead, SchemaWrite, Clone)]
 pub enum Entry {
     /// Stores a value for the given key.
-    Set { k: String, v: String },
+    Set { key: String, value: String },
     /// Tombstone — marks a key as deleted.
-    Delete { k: String },
+    Delete { key: String },
 }
 
 impl Entry {
     /// Returns the key for any entry variant.
-    pub fn k(&self) -> &str {
+    pub fn key(&self) -> &str {
         match self {
-            Self::Set { k, .. } => k.as_str(),
-            Self::Delete { k } => k.as_str(),
+            Self::Set { key, .. } => key.as_str(),
+            Self::Delete { key } => key.as_str(),
         }
     }
 
     /// Returns the value if this is a `Set` entry, `None` for `Delete`.
-    pub fn v(&self) -> Option<&str> {
+    pub fn value(&self) -> Option<&str> {
         match self {
-            Self::Set { v, .. } => Some(v.as_str()),
+            Self::Set { value, .. } => Some(value.as_str()),
             Self::Delete { .. } => None,
         }
     }
@@ -32,35 +32,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn entry_set_k_returns_key() {
-        let k = "k".to_string();
+    fn entry_set_key_returns_key() {
+        let key = "k".to_string();
         let entry = Entry::Set {
-            k: k.clone(),
-            v: "v".to_string(),
+            key: key.clone(),
+            value: "v".to_string(),
         };
-        assert_eq!(entry.k(), k.as_str());
+        assert_eq!(entry.key(), key.as_str());
     }
 
     #[test]
-    fn entry_delete_k_returns_key() {
-        let k = "k".to_string();
-        let entry = Entry::Delete { k: k.clone() };
-        assert_eq!(entry.k(), k);
+    fn entry_delete_key_returns_key() {
+        let key = "k".to_string();
+        let entry = Entry::Delete { key: key.clone() };
+        assert_eq!(entry.key(), key);
     }
 
     #[test]
-    fn entry_set_v_returns_value() {
-        let v = "v".to_string();
+    fn entry_set_value_returns_value() {
+        let value = "v".to_string();
         let entry = Entry::Set {
-            k: "k".to_string(),
-            v: v.clone(),
+            key: "k".to_string(),
+            value: value.clone(),
         };
-        assert_eq!(entry.v(), Some(v.as_str()));
+        assert_eq!(entry.value(), Some(value.as_str()));
     }
 
     #[test]
-    fn entry_delete_v_returns_none() {
-        let entry = Entry::Delete { k: "k".to_string() };
-        assert_eq!(entry.v(), None);
+    fn entry_delete_value_returns_none() {
+        let entry = Entry::Delete { key: "k".to_string() };
+        assert_eq!(entry.value(), None);
     }
 }

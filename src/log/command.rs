@@ -2,8 +2,6 @@ use crate::{
     log::{Log, entry::Entry},
     tui,
 };
-use anyhow::anyhow;
-use std::io::{Seek, SeekFrom};
 use thiserror::Error;
 
 /// Errors from parsing user input into a command.
@@ -24,11 +22,11 @@ pub enum CommandError {
 #[derive(Debug)]
 pub enum Command {
     /// Store a key-value pair.
-    Set { k: String, v: String },
+    Set { key: String, value: String },
     /// Retrieve the value for a key.
-    Get { k: String },
+    Get { key: String },
     /// Remove a key.
-    Delete { k: String },
+    Delete { key: String },
     /// Exit the REPL.
     Quit,
     /// Print available commands.
@@ -45,7 +43,7 @@ impl TryFrom<&str> for Command {
 
         match command_str.as_str() {
             "set" | "s" => {
-                let (Some(k), Some(v)) = (
+                let (Some(key), Some(value)) = (
                     parts.next().map(|s| s.to_string()),
                     parts.next().map(|s| s.to_string()),
                 ) else {
@@ -54,25 +52,25 @@ impl TryFrom<&str> for Command {
                 if parts.next().is_some() {
                     return Err(Self::Error::TooManyArguments);
                 }
-                Ok(Self::Set { k, v })
+                Ok(Self::Set { key, value })
             }
             "get" | "g" => {
-                let Some(k) = parts.next().map(|s| s.to_string()) else {
+                let Some(key) = parts.next().map(|s| s.to_string()) else {
                     return Err(Self::Error::MissingRequiredArguments);
                 };
                 if parts.next().is_some() {
                     return Err(Self::Error::TooManyArguments);
                 }
-                Ok(Self::Get { k })
+                Ok(Self::Get { key })
             }
             "delete" | "del" | "d" => {
-                let Some(k) = parts.next().map(|s| s.to_string()) else {
+                let Some(key) = parts.next().map(|s| s.to_string()) else {
                     return Err(Self::Error::MissingRequiredArguments);
                 };
                 if parts.next().is_some() {
                     return Err(Self::Error::TooManyArguments);
                 }
-                Ok(Self::Delete { k })
+                Ok(Self::Delete { key })
             }
             "quit" | "q" | "exit" => Ok(Self::Quit),
             "help" | "h" => Ok(Self::Help),
@@ -109,37 +107,29 @@ pub trait Execute {
 impl Execute for Log {
     fn execute(&mut self, command: Command) -> anyhow::Result<()> {
         match command {
-            Command::Set { k, v } => {
-                let entry = Entry::Set { k, v };
-                let wrote_at = self.write(&entry)?;
-                self.index.insert(entry.k().to_owned(), wrote_at);
-                self.index.track_write();
-                println!("{} => {}", entry.k(), entry.v().unwrap());
+            Command::Set { key, value } => {
+                let set = Entry::Set { key, value };
+                self.write(&set)?;
+                self.memtable.process(set.clone())?;
+                println!("{} => {}", set.key(), set.value().unwrap());
+                self.maybe_flush()?;
             }
-            Command::Get { k } => {
-                let Some(&offset) = self.index.get(&k) else {
-                    println!("{} not found", k);
-                    return Ok(());
-                };
-                self.file.seek(SeekFrom::Start(offset))?;
-                match self.read_next()? {
-                    Some(Entry::Set { v, .. }) => println!("{} => {}", k, v),
-                    Some(Entry::Delete { .. }) | None => {
-                        return Err(anyhow!("Entry at offset {} corrupted.", offset,));
-                    }
-                };
-            }
-            Command::Delete { k } => {
+            Command::Get { key } => match self.get(&key)? {
+                Some(Entry::Set { value, .. }) => println!("{} => {}", key, value),
+                Some(Entry::Delete { .. }) => println!("Entry at {} corrupted.", key),
+                None => println!("{} not found", key),
+            },
+            Command::Delete { key } => {
                 // Only write tombstone if key exists, avoids unnecessary log growth.
-                if self.index.contains_key(&k) {
-                    let entry = Entry::Delete { k };
-                    self.write(&entry)?;
-                    self.index.remove(entry.k());
-                    self.index.track_write();
-                    println!("{} deleted", entry.k());
+                if self.memtable.contains_key(&key) {
+                    let delete = Entry::Delete { key };
+                    self.write(&delete)?;
+                    self.memtable.process(delete.clone())?;
+                    println!("{} deleted", delete.key());
                 } else {
-                    println!("{} not found", k);
+                    println!("{} not found", key);
                 }
+                self.maybe_flush()?;
             }
             // Quit logic handled in run loop to avoid hard quit
             Command::Quit => {}
@@ -147,10 +137,6 @@ impl Execute for Log {
                 tui::hr();
                 tui::command_hint();
             }
-        }
-
-        if self.index.should_merge() {
-            self.merge()?
         }
 
         Ok(())
@@ -310,25 +296,27 @@ mod tests {
     }
 
     #[test]
-    fn execute_set_adds_to_index() {
+    fn execute_set_adds_to_memtable() {
         let (mut log, _dir) = temp_log();
         let cmd = Command::Set {
-            k: "a".to_string(),
-            v: "1".to_string(),
+            key: "a".to_string(),
+            value: "1".to_string(),
         };
         log.execute(cmd).unwrap();
-        assert_eq!(log.index.len(), 1);
-        assert!(log.index.contains_key("a"));
+        assert_eq!(log.memtable.len(), 1);
+        assert!(log.memtable.contains_key("a"));
     }
 
     #[test]
     fn execute_get_existing_key() {
         let (mut log, _dir) = temp_log();
         let set = Command::Set {
-            k: "a".to_string(),
-            v: "1".to_string(),
+            key: "a".to_string(),
+            value: "1".to_string(),
         };
-        let get = Command::Get { k: "a".to_string() };
+        let get = Command::Get {
+            key: "a".to_string(),
+        };
         log.execute(set).unwrap();
         // Should not error — key exists.
         log.execute(get).unwrap();
@@ -337,31 +325,37 @@ mod tests {
     #[test]
     fn execute_get_missing_key() {
         let (mut log, _dir) = temp_log();
-        let get = Command::Get { k: "a".to_string() };
+        let get = Command::Get {
+            key: "a".to_string(),
+        };
         // Should not error — prints "not found" and returns Ok.
         log.execute(get).unwrap();
     }
 
     #[test]
-    fn execute_delete_existing_key_removes_from_index() {
+    fn execute_delete_existing_key_removes_from_memtable() {
         let (mut log, _dir) = temp_log();
         let set = Command::Set {
-            k: "a".to_string(),
-            v: "1".to_string(),
+            key: "a".to_string(),
+            value: "1".to_string(),
         };
-        let delete = Command::Delete { k: "a".to_string() };
+        let delete = Command::Delete {
+            key: "a".to_string(),
+        };
         log.execute(set).unwrap();
         log.execute(delete).unwrap();
-        assert!(log.index.is_empty());
+        assert!(log.memtable.is_empty());
     }
 
     #[test]
     fn execute_delete_missing_key() {
         let (mut log, _dir) = temp_log();
-        let delete = Command::Delete { k: "a".to_string() };
+        let delete = Command::Delete {
+            key: "a".to_string(),
+        };
         // Should not error — prints "not found" and returns Ok.
         log.execute(delete).unwrap();
-        assert!(log.index.is_empty());
+        assert!(log.memtable.is_empty());
     }
 
     #[test]
@@ -372,30 +366,32 @@ mod tests {
         {
             let mut log = Log::new(path_str, true).unwrap();
             let set = Command::Set {
-                k: "a".to_string(),
-                v: "1".to_string(),
+                key: "a".to_string(),
+                value: "1".to_string(),
             };
-            let delete = Command::Delete { k: "a".to_string() };
+            let delete = Command::Delete {
+                key: "a".to_string(),
+            };
             log.execute(set).unwrap();
             log.execute(delete).unwrap();
         }
-        // Reopen — tombstone should remove key during index rebuild.
+        // Reopen — tombstone should remove key during memtable rebuild.
         let log = Log::new(path_str, false).unwrap();
-        assert!(log.index.is_empty());
+        assert!(log.memtable.is_empty());
     }
 
     #[test]
     fn execute_quit_is_noop() {
         let (mut log, _dir) = temp_log();
         log.execute(Command::Quit).unwrap();
-        assert!(log.index.is_empty());
+        assert!(log.memtable.is_empty());
     }
 
     #[test]
     fn execute_help_is_noop() {
         let (mut log, _dir) = temp_log();
         log.execute(Command::Help).unwrap();
-        assert!(log.index.is_empty());
+        assert!(log.memtable.is_empty());
     }
 
     #[test]
@@ -406,21 +402,31 @@ mod tests {
         {
             let mut log = Log::new(path_str, true).unwrap();
             let first = Command::Set {
-                k: "a".to_string(),
-                v: "1".to_string(),
+                key: "a".to_string(),
+                value: "1".to_string(),
             };
             let second = Command::Set {
-                k: "a".to_string(),
-                v: "2".to_string(),
+                key: "a".to_string(),
+                value: "2".to_string(),
             };
             log.execute(first).unwrap();
             log.execute(second).unwrap();
         }
         // Reopen and get — should read latest value.
         let mut log = Log::new(path_str, false).unwrap();
-        assert_eq!(log.index.len(), 1);
-        let get = Command::Get { k: "a".to_string() };
+        assert_eq!(log.memtable.len(), 1);
+        let get = Command::Get {
+            key: "a".to_string(),
+        };
         // Should not error — the offset points to the second set.
         log.execute(get).unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    #[allow(dead_code)]
+    fn execute_get_finds_key_in_sstable_after_flush() {
+        // set a key, call flush() to push it to SSTable, then execute Get — should still find it
+        todo!()
     }
 }
