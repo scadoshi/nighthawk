@@ -63,10 +63,20 @@
 
 ### Step 3 — SSTable read path (COMPLETE)
 - [x] `Log::get()` — memtable first, then linear scan SSTables newest-to-oldest
-- [x] `create_dir_all` before `read_dir` so missing sstables dir doesn't panic
+- [x] `Log::get()` returns `None` (not error) when sstables dir is missing
+- [x] `Log::contains()` — delegates to `get()`, used in Delete to check both layers
+- [x] `Execute` Delete arm uses `contains()` — tombstone written even for flushed keys
 - [x] `Execute` Get arm uses `Log::get()` — falls through to SSTables on memtable miss
-- [x] Placeholder tests added (`#[ignore]`) for flush, get SSTable path, maybe_flush, memtable methods
 
-### Current test count: 59 passing, 20 ignored
+### Refactors and bug fixes (Steps 1–3)
+- [x] `Log::new` — 4-arg form `(data_path, memtable_path, sstables_path, truncate)`
+- [x] `Log` fields: `file` → `memtable_file`, `path` → `memtable_path`; added `sstables_path`
+- [x] `flush()` / `maybe_flush()` — no longer take path arg, use `self.sstables_path`
+- [x] `Entry::set()` / `Entry::delete()` — constructors replacing manual struct construction
+- [x] `Entry` derives `PartialEq`, implements `From<&Entry>`
+- [x] Fixed `process()` size tracking — overwriting a Set now decrements old size before adding new
+- [x] All tests updated: inlined single-use bindings, chained `.unwrap()`, consistent naming
 
-### Next: Step 4 — fill in ignored tests, then SSTable merge/compaction
+### Current test count: 77 passing, 0 ignored
+
+### Next: Step 4 — SSTable merge/compaction
