@@ -95,6 +95,37 @@ impl Command {
             }
         }
     }
+
+    /// Constructs a `Set` command.
+    pub fn set(key: impl Into<String>, value: impl Into<String>) -> Self {
+        Self::Set { key: key.into(), value: value.into() }
+    }
+
+    /// Constructs a `Get` command.
+    pub fn get(key: impl Into<String>) -> Self {
+        Self::Get { key: key.into() }
+    }
+
+    /// Constructs a `Delete` command.
+    pub fn delete(key: impl Into<String>) -> Self {
+        Self::Delete { key: key.into() }
+    }
+
+    /// Returns the key for commands that carry one (`Set`, `Get`, `Delete`), `None` otherwise.
+    pub fn key(&self) -> Option<&str> {
+        match self {
+            Self::Set { key, .. } | Self::Get { key } | Self::Delete { key } => Some(key.as_str()),
+            Self::Quit | Self::Help => None,
+        }
+    }
+
+    /// Returns the value for `Set` commands, `None` for all others.
+    pub fn value(&self) -> Option<&str> {
+        match self {
+            Self::Set { value, .. } => Some(value.as_str()),
+            Self::Get { .. } | Self::Delete { .. } | Self::Quit | Self::Help => None,
+        }
+    }
 }
 
 /// Runs a command against a log store. Separated from `Log` so command
@@ -108,9 +139,8 @@ impl Execute for Log {
     fn execute(&mut self, command: Command) -> anyhow::Result<()> {
         match command {
             Command::Set { key, value } => {
-                let set = Entry::Set { key, value };
+                let set = Entry::set(key, value);
                 self.write(&set)?;
-                self.memtable.process(set.clone())?;
                 println!("{} => {}", set.key(), set.value().unwrap());
                 self.maybe_flush()?;
             }
@@ -121,17 +151,16 @@ impl Execute for Log {
             },
             Command::Delete { key } => {
                 // Only write tombstone if key exists, avoids unnecessary log growth.
-                if self.memtable.contains_key(&key) {
-                    let delete = Entry::Delete { key };
+                if self.contains(&key)? {
+                    let delete = Entry::delete(key);
                     self.write(&delete)?;
-                    self.memtable.process(delete.clone())?;
                     println!("{} deleted", delete.key());
                 } else {
                     println!("{} not found", key);
                 }
                 self.maybe_flush()?;
             }
-            // Quit logic handled in run loop to avoid hard quit
+            // Quit logic handled in run loop to avoid hard exit
             Command::Quit => {}
             Command::Help => {
                 tui::hr();
@@ -146,250 +175,237 @@ impl Execute for Log {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn command_set_from_standard() {
-        let result = Command::try_from("set a b");
-        assert!(matches!(result, Ok(Command::Set { .. })));
+        assert!(matches!(
+            Command::try_from("set a b"),
+            Ok(Command::Set { .. })
+        ));
     }
 
     #[test]
     fn command_set_from_alias_s() {
-        let result = Command::try_from("s a b");
-        assert!(matches!(result, Ok(Command::Set { .. })));
+        assert!(matches!(
+            Command::try_from("s a b"),
+            Ok(Command::Set { .. })
+        ));
     }
 
     #[test]
     fn command_get_from_standard() {
-        let result = Command::try_from("get a");
-        assert!(matches!(result, Ok(Command::Get { .. })));
+        assert!(matches!(
+            Command::try_from("get a"),
+            Ok(Command::Get { .. })
+        ));
     }
 
     #[test]
     fn command_get_from_alias_g() {
-        let result = Command::try_from("g a");
-        assert!(matches!(result, Ok(Command::Get { .. })));
+        assert!(matches!(Command::try_from("g a"), Ok(Command::Get { .. })));
     }
 
     #[test]
     fn command_delete_from_standard() {
-        let result = Command::try_from("delete a");
-        assert!(matches!(result, Ok(Command::Delete { .. })));
+        assert!(matches!(
+            Command::try_from("delete a"),
+            Ok(Command::Delete { .. })
+        ));
     }
 
     #[test]
     fn command_delete_from_alias_del() {
-        let result = Command::try_from("del a");
-        assert!(matches!(result, Ok(Command::Delete { .. })));
+        assert!(matches!(
+            Command::try_from("del a"),
+            Ok(Command::Delete { .. })
+        ));
     }
 
     #[test]
     fn command_delete_from_alias_d() {
-        let result = Command::try_from("d a");
-        assert!(matches!(result, Ok(Command::Delete { .. })));
+        assert!(matches!(
+            Command::try_from("d a"),
+            Ok(Command::Delete { .. })
+        ));
     }
 
     #[test]
     fn command_quit_from_standard() {
-        let result = Command::try_from("quit");
-        assert!(matches!(result, Ok(Command::Quit)));
+        assert!(matches!(Command::try_from("quit"), Ok(Command::Quit)));
     }
 
     #[test]
     fn command_quit_from_alias_q() {
-        let result = Command::try_from("q");
-        assert!(matches!(result, Ok(Command::Quit)));
+        assert!(matches!(Command::try_from("q"), Ok(Command::Quit)));
     }
 
     #[test]
     fn command_quit_from_alias_exit() {
-        let result = Command::try_from("exit");
-        assert!(matches!(result, Ok(Command::Quit)));
+        assert!(matches!(Command::try_from("exit"), Ok(Command::Quit)));
     }
 
     #[test]
     fn command_help_from_standard() {
-        let result = Command::try_from("help");
-        assert!(matches!(result, Ok(Command::Help)));
+        assert!(matches!(Command::try_from("help"), Ok(Command::Help)));
     }
 
     #[test]
     fn command_help_from_alias_h() {
-        let result = Command::try_from("h");
-        assert!(matches!(result, Ok(Command::Help)));
+        assert!(matches!(Command::try_from("h"), Ok(Command::Help)));
     }
 
     #[test]
     fn command_err_empty_input() {
-        let result = Command::try_from("");
         assert!(matches!(
-            result,
+            Command::try_from(""),
             Err(CommandError::MissingRequiredArguments)
         ));
     }
 
     #[test]
     fn command_err_set_missing_value() {
-        let result = Command::try_from("set a");
         assert!(matches!(
-            result,
+            Command::try_from("set a"),
             Err(CommandError::MissingRequiredArguments)
         ));
     }
 
     #[test]
     fn command_err_set_missing_key_and_value() {
-        let result = Command::try_from("set");
         assert!(matches!(
-            result,
+            Command::try_from("set"),
             Err(CommandError::MissingRequiredArguments)
         ));
     }
 
     #[test]
     fn command_err_get_missing_key() {
-        let result = Command::try_from("get");
         assert!(matches!(
-            result,
+            Command::try_from("get"),
             Err(CommandError::MissingRequiredArguments)
         ));
     }
 
     #[test]
     fn command_err_delete_missing_key() {
-        let result = Command::try_from("delete");
         assert!(matches!(
-            result,
+            Command::try_from("delete"),
             Err(CommandError::MissingRequiredArguments)
         ));
     }
 
     #[test]
     fn command_err_set_too_many_arguments() {
-        let result = Command::try_from("set a b c");
-        assert!(matches!(result, Err(CommandError::TooManyArguments)));
+        assert!(matches!(
+            Command::try_from("set a b c"),
+            Err(CommandError::TooManyArguments)
+        ));
     }
 
     #[test]
     fn command_err_get_too_many_arguments() {
-        let result = Command::try_from("get a b");
-        assert!(matches!(result, Err(CommandError::TooManyArguments)));
+        assert!(matches!(
+            Command::try_from("get a b"),
+            Err(CommandError::TooManyArguments)
+        ));
     }
 
     #[test]
     fn command_err_delete_too_many_arguments() {
-        let result = Command::try_from("delete a b");
-        assert!(matches!(result, Err(CommandError::TooManyArguments)));
+        assert!(matches!(
+            Command::try_from("delete a b"),
+            Err(CommandError::TooManyArguments)
+        ));
     }
 
     #[test]
     fn command_err_unrecognized_command() {
-        let result = Command::try_from("foo");
-        assert!(matches!(result, Err(CommandError::UnrecognizedCommand)));
+        assert!(matches!(
+            Command::try_from("foo"),
+            Err(CommandError::UnrecognizedCommand)
+        ));
     }
 
-    fn temp_log() -> (Log, tempfile::TempDir) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.log");
-        let log = Log::new(path.to_str().unwrap(), true).unwrap();
-        (log, dir)
+    fn temp_log() -> anyhow::Result<Log> {
+        let dir = tempdir()?;
+        Log::new(
+            dir.path(),
+            dir.path().join("test.log"),
+            dir.path().join("sstables"),
+            true,
+        )
     }
 
     #[test]
     fn execute_set_adds_to_memtable() {
-        let (mut log, _dir) = temp_log();
-        let cmd = Command::Set {
-            key: "a".to_string(),
-            value: "1".to_string(),
-        };
+        let mut log = temp_log().unwrap();
+        let cmd = Command::set("a", "1");
+        let key = cmd.key().unwrap().to_string();
         log.execute(cmd).unwrap();
         assert_eq!(log.memtable.len(), 1);
-        assert!(log.memtable.contains_key("a"));
+        assert!(log.memtable.contains_key(&key));
     }
 
     #[test]
     fn execute_get_existing_key() {
-        let (mut log, _dir) = temp_log();
-        let set = Command::Set {
-            key: "a".to_string(),
-            value: "1".to_string(),
-        };
-        let get = Command::Get {
-            key: "a".to_string(),
-        };
+        let mut log = temp_log().unwrap();
+        let set = Command::set("a", "1");
+        let key = set.key().unwrap().to_string();
         log.execute(set).unwrap();
-        // Should not error — key exists.
-        log.execute(get).unwrap();
+        log.execute(Command::get(key)).unwrap();
     }
 
     #[test]
     fn execute_get_missing_key() {
-        let (mut log, _dir) = temp_log();
-        let get = Command::Get {
-            key: "a".to_string(),
-        };
-        // Should not error — prints "not found" and returns Ok.
-        log.execute(get).unwrap();
+        let mut log = temp_log().unwrap();
+        log.execute(Command::get("a")).unwrap();
     }
 
     #[test]
     fn execute_delete_existing_key_removes_from_memtable() {
-        let (mut log, _dir) = temp_log();
-        let set = Command::Set {
-            key: "a".to_string(),
-            value: "1".to_string(),
-        };
-        let delete = Command::Delete {
-            key: "a".to_string(),
-        };
+        let mut log = temp_log().unwrap();
+        let set = Command::set("a", "1");
+        let key = set.key().unwrap().to_string();
         log.execute(set).unwrap();
-        log.execute(delete).unwrap();
+        log.execute(Command::delete(key)).unwrap();
         assert!(log.memtable.is_empty());
     }
 
     #[test]
     fn execute_delete_missing_key() {
-        let (mut log, _dir) = temp_log();
-        let delete = Command::Delete {
-            key: "a".to_string(),
-        };
-        // Should not error — prints "not found" and returns Ok.
-        log.execute(delete).unwrap();
+        let mut log = temp_log().unwrap();
+        log.execute(Command::delete("a")).unwrap();
         assert!(log.memtable.is_empty());
     }
 
     #[test]
     fn execute_delete_persists_tombstone() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.log");
-        let path_str = path.to_str().unwrap();
+        let memtable_path = dir.path().join("test.log");
+        let sstables_path = dir.path().join("sstables");
         {
-            let mut log = Log::new(path_str, true).unwrap();
-            let set = Command::Set {
-                key: "a".to_string(),
-                value: "1".to_string(),
-            };
-            let delete = Command::Delete {
-                key: "a".to_string(),
-            };
+            let mut log = Log::new(dir.path(), &memtable_path, &sstables_path, true).unwrap();
+            let set = Command::set("a", "1");
+            let key = set.key().unwrap().to_string();
+            let delete = Command::delete(key);
             log.execute(set).unwrap();
             log.execute(delete).unwrap();
         }
-        // Reopen — tombstone should remove key during memtable rebuild.
-        let log = Log::new(path_str, false).unwrap();
+        let log = Log::new(dir.path(), &memtable_path, &sstables_path, false).unwrap();
         assert!(log.memtable.is_empty());
     }
 
     #[test]
     fn execute_quit_is_noop() {
-        let (mut log, _dir) = temp_log();
+        let mut log = temp_log().unwrap();
         log.execute(Command::Quit).unwrap();
         assert!(log.memtable.is_empty());
     }
 
     #[test]
     fn execute_help_is_noop() {
-        let (mut log, _dir) = temp_log();
+        let mut log = temp_log().unwrap();
         log.execute(Command::Help).unwrap();
         assert!(log.memtable.is_empty());
     }
@@ -397,36 +413,29 @@ mod tests {
     #[test]
     fn execute_set_overwrite_updates_value() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.log");
-        let path_str = path.to_str().unwrap();
+        let memtable_path = dir.path().join("test.log");
+        let sstables_path = dir.path().join("sstables");
         {
-            let mut log = Log::new(path_str, true).unwrap();
-            let first = Command::Set {
-                key: "a".to_string(),
-                value: "1".to_string(),
-            };
-            let second = Command::Set {
-                key: "a".to_string(),
-                value: "2".to_string(),
-            };
+            let mut log = Log::new(dir.path(), &memtable_path, &sstables_path, true).unwrap();
+            let first = Command::set("a", "1");
+            let key = first.key().unwrap().to_string();
+            let second = Command::set(key.clone(), "2");
             log.execute(first).unwrap();
             log.execute(second).unwrap();
         }
-        // Reopen and get — should read latest value.
-        let mut log = Log::new(path_str, false).unwrap();
+        let mut log = Log::new(dir.path(), &memtable_path, &sstables_path, false).unwrap();
         assert_eq!(log.memtable.len(), 1);
-        let get = Command::Get {
-            key: "a".to_string(),
-        };
-        // Should not error — the offset points to the second set.
-        log.execute(get).unwrap();
+        log.execute(Command::get("a")).unwrap();
     }
 
     #[test]
-    #[ignore]
-    #[allow(dead_code)]
     fn execute_get_finds_key_in_sstable_after_flush() {
-        // set a key, call flush() to push it to SSTable, then execute Get — should still find it
-        todo!()
+        let mut log = temp_log().unwrap();
+        let set = Command::set("a", "1");
+        let key = set.key().unwrap().to_string();
+        log.execute(set).unwrap();
+        log.flush().unwrap();
+        assert!(log.contains(&key).unwrap());
+        log.execute(Command::get(key)).unwrap();
     }
 }
