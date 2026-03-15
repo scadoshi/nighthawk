@@ -28,16 +28,15 @@ pub enum CorruptionType {
 /// Write entries with the on-disk header format:
 /// `[magic: 2B][crc32: 4B][entry_len: 4B][wincode-serialized Entry]`
 pub trait HeaderWriter {
-    /// Appends an entry with header to end of file. Returns the byte offset where it was written.
-    fn write_entry_with_header(&mut self, entry: &Entry) -> anyhow::Result<u64>;
+    /// Appends an entry with header to end of file.
+    fn write_entry_with_header(&mut self, entry: &Entry) -> anyhow::Result<()>;
 }
 
 impl<W: Write + Seek> HeaderWriter for W {
-    fn write_entry_with_header(&mut self, entry: &Entry) -> anyhow::Result<u64> {
+    fn write_entry_with_header(&mut self, entry: &Entry) -> anyhow::Result<()> {
         self.seek(SeekFrom::End(0))?;
-        let wrote_at = self.stream_position()?;
         self.write_all(entry.try_into_bytes_with_header()?.as_slice())?;
-        Ok(wrote_at)
+        Ok(())
     }
 }
 
@@ -145,22 +144,6 @@ impl TryIntoEntryWithLen for [u8] {
 mod tests {
     use super::*;
 
-    fn create_entry_set_with_expected_parts() -> (Entry, String, String) {
-        let k = "k".to_string();
-        let v = "v".to_string();
-        let entry = Entry::Set {
-            key: k.clone(),
-            value: v.clone(),
-        };
-        (entry, k, v)
-    }
-
-    fn create_entry_delete_with_expected_parts() -> (Entry, String) {
-        let k = "k".to_string();
-        let entry = Entry::Delete { key: k.clone() };
-        (entry, k)
-    }
-
     fn entry_bytes_from_parts(magic: u16, checksum: u32, len: u32, entry_bytes: &[u8]) -> Vec<u8> {
         let mut bytes = Vec::<u8>::new();
         bytes.extend(magic.to_le_bytes());
@@ -172,162 +155,145 @@ mod tests {
 
     #[test]
     fn try_into_entry_with_header_err_not_enough_bytes() {
-        let result = 0_u32.to_le_bytes().try_into_entry_with_len();
-        assert!(matches!(result, Err(CorruptionType::NotEnoughBytes)));
+        assert!(matches!(0_u32.to_le_bytes().try_into_entry_with_len(), Err(CorruptionType::NotEnoughBytes)));
     }
 
     #[test]
     fn try_into_entry_with_header_set_ok() {
-        let (entry, k, v) = create_entry_set_with_expected_parts();
-        let entry_bytes = wincode::serialize(&entry).unwrap();
-        let checksum = crc32fast::hash(&entry_bytes);
-        let len = entry_bytes.len() as u32;
-        let bytes = entry_bytes_from_parts(MAGIC, checksum, len, entry_bytes.as_slice());
+        let set = Entry::set("a", "1");
+        let set_bytes = wincode::serialize(&set).unwrap();
+        let checksum = crc32fast::hash(&set_bytes);
+        let len = set_bytes.len() as u32;
+        let bytes = entry_bytes_from_parts(MAGIC, checksum, len, set_bytes.as_slice());
         let result = bytes.try_into_entry_with_len();
         assert!(matches!(result, Ok((Entry::Set { .. }, _))));
         let (resulting_entry, consumed) = result.unwrap();
-        assert_eq!(resulting_entry.key(), k.as_str());
-        assert_eq!(resulting_entry.value(), Some(v.as_str()));
+        assert_eq!(resulting_entry.key(), set.key());
+        assert_eq!(resulting_entry.value(), set.value());
         assert_eq!(consumed, len as usize + HEADER_LEN as usize);
     }
 
     #[test]
     fn try_into_entry_with_header_set_err_magic_bytes_mismatch() {
-        let (entry, _, _) = create_entry_set_with_expected_parts();
-        let entry_bytes = wincode::serialize(&entry).unwrap();
-        let checksum = crc32fast::hash(&entry_bytes);
-        let len = entry_bytes.len() as u32;
-        let bytes = entry_bytes_from_parts(0_u16, checksum, len, entry_bytes.as_slice());
-        let result = bytes.try_into_entry_with_len();
-        assert!(matches!(result, Err(CorruptionType::MagicBytesMismatch)));
+        let set = Entry::set("a", "1");
+        let set_bytes = wincode::serialize(&set).unwrap();
+        let checksum = crc32fast::hash(&set_bytes);
+        let len = set_bytes.len() as u32;
+        let bytes = entry_bytes_from_parts(0_u16, checksum, len, set_bytes.as_slice());
+        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::MagicBytesMismatch)));
     }
 
     #[test]
     fn try_into_entry_with_header_set_err_checksum_mismatch() {
-        let (entry, _, _) = create_entry_set_with_expected_parts();
-        let entry_bytes = wincode::serialize(&entry).unwrap();
-        let incorrect_checksum = 0_u32;
-        let len = entry_bytes.len() as u32;
-        let bytes = entry_bytes_from_parts(MAGIC, incorrect_checksum, len, entry_bytes.as_slice());
-        let result = bytes.try_into_entry_with_len();
-        assert!(matches!(result, Err(CorruptionType::ChecksumMismatch)));
+        let set = Entry::set("a", "1");
+        let set_bytes = wincode::serialize(&set).unwrap();
+        let len = set_bytes.len() as u32;
+        let bytes = entry_bytes_from_parts(MAGIC, 0_u32, len, set_bytes.as_slice());
+        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::ChecksumMismatch)));
     }
 
     #[test]
     fn try_into_entry_with_header_set_err_entry_parse_error() {
         // Garbage payload the same length as the real entry so it passes the length check.
-        let (entry, _, _) = create_entry_set_with_expected_parts();
-        let real_len = wincode::serialize(&entry).unwrap().len();
+        let set = Entry::set("a", "1");
+        let real_len = wincode::serialize(&set).unwrap().len();
         let garbage = vec![0xFF; real_len];
         let checksum = crc32fast::hash(&garbage);
         let bytes = entry_bytes_from_parts(MAGIC, checksum, real_len as u32, &garbage);
-        let result = bytes.try_into_entry_with_len();
-        assert!(matches!(result, Err(CorruptionType::EntryParseError)));
+        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::EntryParseError)));
     }
 
     #[test]
     fn try_into_entry_with_header_delete_ok() {
-        let (entry, k) = create_entry_delete_with_expected_parts();
-        let entry_bytes = wincode::serialize(&entry).unwrap();
-        let checksum = crc32fast::hash(&entry_bytes);
-        let len = entry_bytes.len() as u32;
-        let bytes = entry_bytes_from_parts(MAGIC, checksum, len, entry_bytes.as_slice());
+        let delete = Entry::delete("a");
+        let delete_bytes = wincode::serialize(&delete).unwrap();
+        let checksum = crc32fast::hash(&delete_bytes);
+        let len = delete_bytes.len() as u32;
+        let bytes = entry_bytes_from_parts(MAGIC, checksum, len, delete_bytes.as_slice());
         let result = bytes.try_into_entry_with_len();
         assert!(matches!(result, Ok((Entry::Delete { .. }, _))));
         let (resulting_entry, consumed) = result.unwrap();
-        assert_eq!(resulting_entry.key(), k.as_str());
+        assert_eq!(resulting_entry.key(), delete.key());
         assert_eq!(resulting_entry.value(), None);
         assert_eq!(consumed, len as usize + HEADER_LEN as usize);
     }
 
     #[test]
     fn try_into_entry_with_header_delete_err_magic_bytes_mismatch() {
-        let (entry, _) = create_entry_delete_with_expected_parts();
-        let entry_bytes = wincode::serialize(&entry).unwrap();
-        let checksum = crc32fast::hash(&entry_bytes);
-        let len = entry_bytes.len() as u32;
-        let bytes = entry_bytes_from_parts(0_u16, checksum, len, entry_bytes.as_slice());
-        let result = bytes.try_into_entry_with_len();
-        assert!(matches!(result, Err(CorruptionType::MagicBytesMismatch)));
+        let delete = Entry::delete("a");
+        let delete_bytes = wincode::serialize(&delete).unwrap();
+        let checksum = crc32fast::hash(&delete_bytes);
+        let len = delete_bytes.len() as u32;
+        let bytes = entry_bytes_from_parts(0_u16, checksum, len, delete_bytes.as_slice());
+        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::MagicBytesMismatch)));
     }
 
     #[test]
     fn try_into_entry_with_header_delete_err_checksum_mismatch() {
-        let (entry, _) = create_entry_delete_with_expected_parts();
-        let entry_bytes = wincode::serialize(&entry).unwrap();
-        let incorrect_checksum = 0_u32;
-        let len = entry_bytes.len() as u32;
-        let bytes = entry_bytes_from_parts(MAGIC, incorrect_checksum, len, entry_bytes.as_slice());
-        let result = bytes.try_into_entry_with_len();
-        assert!(matches!(result, Err(CorruptionType::ChecksumMismatch)));
+        let delete = Entry::delete("a");
+        let delete_bytes = wincode::serialize(&delete).unwrap();
+        let len = delete_bytes.len() as u32;
+        let bytes = entry_bytes_from_parts(MAGIC, 0_u32, len, delete_bytes.as_slice());
+        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::ChecksumMismatch)));
     }
 
     #[test]
     fn try_into_entry_with_header_delete_err_entry_parse_error() {
-        let (entry, _) = create_entry_delete_with_expected_parts();
-        let real_len = wincode::serialize(&entry).unwrap().len();
+        let delete = Entry::delete("a");
+        let real_len = wincode::serialize(&delete).unwrap().len();
         let garbage = vec![0xFF; real_len];
         let checksum = crc32fast::hash(&garbage);
         let bytes = entry_bytes_from_parts(MAGIC, checksum, real_len as u32, &garbage);
-        let result = bytes.try_into_entry_with_len();
-        assert!(matches!(result, Err(CorruptionType::EntryParseError)));
+        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::EntryParseError)));
     }
 
     #[test]
     fn write_entry_with_header_set_ok() {
         let mut file = tempfile::tempfile().unwrap();
-        let (entry, _, _) = create_entry_set_with_expected_parts();
-        let result = file.write_entry_with_header(&entry);
-        assert!(result.is_ok());
-        let wrote_at = result.unwrap();
-        assert_eq!(wrote_at, 0);
+        let set = Entry::set("a", "1");
+        file.write_entry_with_header(&set).unwrap();
     }
 
     #[test]
     fn write_entry_with_header_set_ok_then_read() {
         let mut file = tempfile::tempfile().unwrap();
-        let (entry, k, v) = create_entry_set_with_expected_parts();
-        let wrote_at = file.write_entry_with_header(&entry).unwrap();
-        assert_eq!(wrote_at, 0);
-        file.seek(SeekFrom::Start(wrote_at)).unwrap();
+        let set = Entry::set("a", "1");
+        file.write_entry_with_header(&set).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
         let result = file.read_next_entry_with_header().unwrap().unwrap();
-        assert_eq!(result.key(), k);
-        assert_eq!(result.value(), Some(v.as_str()));
+        assert_eq!(result.key(), set.key());
+        assert_eq!(result.value(), set.value());
     }
 
     #[test]
     fn write_entry_with_header_delete_ok() {
         let mut file = tempfile::tempfile().unwrap();
-        let (entry, _) = create_entry_delete_with_expected_parts();
-        let result = file.write_entry_with_header(&entry);
-        assert!(result.is_ok());
-        let wrote_at = result.unwrap();
-        assert_eq!(wrote_at, 0);
+        let delete = Entry::delete("a");
+        file.write_entry_with_header(&delete).unwrap();
     }
 
     #[test]
     fn write_entry_with_header_delete_ok_then_read() {
         let mut file = tempfile::tempfile().unwrap();
-        let (entry, k) = create_entry_delete_with_expected_parts();
-        let wrote_at = file.write_entry_with_header(&entry).unwrap();
-        assert_eq!(wrote_at, 0);
-        file.seek(SeekFrom::Start(wrote_at)).unwrap();
+        let delete = Entry::delete("a");
+        file.write_entry_with_header(&delete).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
         let result = file.read_next_entry_with_header().unwrap().unwrap();
-        assert_eq!(result.key(), k);
+        assert_eq!(result.key(), delete.key());
     }
 
     #[test]
     fn read_next_entry_with_header_recovers_past_corruption() {
         let mut file = tempfile::tempfile().unwrap();
+        let set = Entry::set("a", "1");
         // Write 7 bytes of garbage before a valid entry.
         let garbage = [0xFF; 7];
         file.write_all(&garbage).unwrap();
-        let (entry, k, v) = create_entry_set_with_expected_parts();
-        file.write_entry_with_header(&entry).unwrap();
+        file.write_entry_with_header(&set).unwrap();
         // Seek to start — reader should skip garbage and find the entry.
         file.seek(SeekFrom::Start(0)).unwrap();
         let result = file.read_next_entry_with_header().unwrap().unwrap();
-        assert_eq!(result.key(), k);
-        assert_eq!(result.value(), Some(v.as_str()));
+        assert_eq!(result.key(), set.key());
+        assert_eq!(result.value(), set.value());
     }
 }
