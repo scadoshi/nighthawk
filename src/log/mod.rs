@@ -1,4 +1,5 @@
 pub mod command;
+pub mod compact;
 pub mod entry;
 pub mod header;
 pub mod memtable;
@@ -11,8 +12,16 @@ use std::{
     fs::{File, OpenOptions, create_dir_all, read_dir},
     io::{Seek, SeekFrom},
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
 };
+
+/// Root directory for all persisted data.
+pub const DATA_PATH: &str = "data";
+/// Path to the write-ahead log (WAL) file.
+pub const MEMTABLE_PATH: &str = "data/memtable";
+/// Directory containing flushed SSTable files.
+pub const SSTABLES_PATH: &str = "data/sstables";
+/// Multiple which flush_count is checked against in order to determine compaction timing
+const COMPACT_EVERY_N_FLUSHES: u64 = 10;
 
 /// Append-only log store. Owns the data file and in-memory key-to-entry memtable.
 #[derive(Debug)]
@@ -21,14 +30,8 @@ pub struct Log {
     memtable_file: File,
     memtable: MemTable,
     sstables_path: PathBuf,
+    flush_count: u64,
 }
-
-/// Root directory for all persisted data.
-pub const DATA_PATH: &str = "data";
-/// Path to the write-ahead log (WAL) file.
-pub const MEMTABLE_PATH: &str = "data/memtable";
-/// Directory containing flushed SSTable files.
-pub const SSTABLES_PATH: &str = "data/sstables";
 
 impl Log {
     /// Opens or creates a log file and rebuilds the memtable from its contents. Takes truncate flag
@@ -39,11 +42,13 @@ impl Log {
         sstables_path: impl Into<PathBuf>,
         truncate: bool,
     ) -> anyhow::Result<Self> {
+        // Initialize paths and dirs
         let data_path = data_path.into();
         let memtable_path = memtable_path.into();
         let sstables_path = sstables_path.into();
         create_dir_all(&data_path)?;
         create_dir_all(&sstables_path)?;
+        // Open WAL and initialize memtable
         let mut memtable_file = OpenOptions::new()
             .create(true)
             .truncate(truncate)
@@ -51,11 +56,15 @@ impl Log {
             .write(true)
             .open(&memtable_path)?;
         let memtable = MemTable::from_file(&mut memtable_file)?;
+        // SSTable count equates to flush count
+        let flush_count = read_dir(&sstables_path)?.count() as u64;
+        // Return
         Ok(Self {
             memtable_file,
             memtable_path,
             memtable,
             sstables_path,
+            flush_count,
         })
     }
 
@@ -97,36 +106,22 @@ impl Log {
         self.get(key).map(|o| o.is_some())
     }
 
-    /// Reads the next entry from the current file cursor position.
-    pub fn read_next(&mut self) -> anyhow::Result<Option<Entry>> {
-        self.memtable_file.read_next_entry_with_header()
-    }
-
     /// Writes all memtable entries sorted by key to a new timestamped SSTable file,
     /// then truncates the WAL and clears the memtable.
     pub fn flush(&mut self) -> anyhow::Result<()> {
-        let mut path = self.sstables_path.clone();
-        create_dir_all(&path)?;
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros();
-        path.push(format!("{:020}.sst", ts));
-        let mut file = OpenOptions::new()
-            .truncate(true)
-            .create(true)
-            .write(true)
-            .open(path)?;
-        for entry in self.memtable.values() {
-            file.write_entry_with_header(entry)?;
-        }
-        file.sync_all()?;
+        self.memtable.flush_to(self.sstables_path.clone())?;
         self.memtable_file.set_len(0)?;
         self.memtable_file.seek(SeekFrom::Start(0))?;
-        self.memtable.clear();
+        self.flush_count += 1;
+        if self.flush_count.is_multiple_of(COMPACT_EVERY_N_FLUSHES) {
+            self.compact()?;
+        }
         Ok(())
     }
 
     /// Flushes to an SSTable if the memtable has exceeded the 4 MB size threshold.
     pub fn maybe_flush(&mut self) -> anyhow::Result<()> {
-        if self.memtable.size() > 4 * (1 << 20) {
+        if self.memtable.should_flush() {
             self.flush()
         } else {
             Ok(())
@@ -138,37 +133,22 @@ impl Log {
 mod tests {
     use super::*;
 
-    fn temp_log() -> anyhow::Result<Log> {
-        let dir = tempfile::tempdir()?;
-        Log::new(
+    fn temp_log() -> (tempfile::TempDir, Log) {
+        let dir = tempfile::tempdir().unwrap();
+        let log = Log::new(
             dir.path(),
             dir.path().join("memtable"),
             dir.path().join("sstables"),
             true,
         )
+        .unwrap();
+        (dir, log)
     }
 
     #[test]
     fn new_creates_empty_memtable() {
-        let log = temp_log().unwrap();
+        let (_dir, log) = temp_log();
         assert!(log.memtable.is_empty());
-    }
-
-    #[test]
-    fn write_then_read_returns_entry() {
-        let mut log = temp_log().unwrap();
-        let set = Entry::set("a", "1");
-        log.write(&set).unwrap();
-        log.memtable_file.seek(SeekFrom::Start(0)).unwrap();
-        let result = log.read_next().unwrap().unwrap();
-        assert_eq!(result.key(), "a");
-        assert_eq!(result.value(), Some("1"));
-    }
-
-    #[test]
-    fn read_next_on_empty_returns_none() {
-        let mut log = temp_log().unwrap();
-        assert!(log.read_next().unwrap().is_none());
     }
 
     #[test]
@@ -188,7 +168,7 @@ mod tests {
 
     #[test]
     fn get_returns_entry_from_memtable() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         let set = Entry::set("a", "1");
         log.write(&set).unwrap();
         let result = log.get("a").unwrap().unwrap();
@@ -198,13 +178,13 @@ mod tests {
 
     #[test]
     fn get_returns_none_when_absent_from_both() {
-        let log = temp_log().unwrap();
+        let (_dir, log) = temp_log();
         assert!(log.get("a").unwrap().is_none());
     }
 
     #[test]
     fn get_finds_entry_in_sstable_after_flush() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         let set = Entry::set("a", "1");
         log.write(&set).unwrap();
         log.flush().unwrap();
@@ -215,7 +195,7 @@ mod tests {
 
     #[test]
     fn get_returns_newest_when_key_in_multiple_sstables() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         let set1 = Entry::set("a", "1");
         log.write(&set1).unwrap();
         let set2 = Entry::set("a", "2");
@@ -226,7 +206,7 @@ mod tests {
 
     #[test]
     fn flush_creates_sstable_file_on_disk() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         let set = Entry::set("a", "1");
         log.write(&set).unwrap();
         log.flush().unwrap();
@@ -239,7 +219,7 @@ mod tests {
 
     #[test]
     fn flush_clears_memtable() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         let set = Entry::set("a", "1");
         log.write(&set).unwrap();
         log.flush().unwrap();
@@ -248,7 +228,7 @@ mod tests {
 
     #[test]
     fn flush_truncates_wal() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         let set = Entry::set("a", "1");
         log.write(&set).unwrap();
         log.flush().unwrap();
@@ -257,7 +237,7 @@ mod tests {
 
     #[test]
     fn maybe_flush_does_not_flush_when_below_threshold() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         let set = Entry::set("a", "1");
         log.write(&set).unwrap();
         log.maybe_flush().unwrap();
