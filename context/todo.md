@@ -41,10 +41,15 @@ See `src/log/header.rs` for on-disk format.
 - [x] Wire `Log::get()` into `Execute` Get arm
 - [x] Placeholder tests added for SSTable read path, flush, maybe_flush — fill in with `#[ignore]` stubs
 
-### Step 4 — SSTable merge/compaction
-- [ ] Merge multiple SSTable files into one — sorted k-way merge
-- [ ] Drop deleted keys and superseded values during merge
-- [ ] Trigger merge when SSTable count exceeds threshold
+### Step 4 — SSTable merge/compaction (COMPLETE)
+- [x] Merge multiple SSTable files into one — sorted k-way merge in `src/log/compact.rs`
+- [x] Drop deleted keys and superseded values during merge — newest SSTable wins on duplicate key
+- [x] Trigger merge every N flushes — `flush_count` on `Log`, `COMPACT_EVERY_N_FLUSHES = 10`
+
+### Step 4.5 — Leveled compaction (optional)
+- [ ] Organize SSTables into levels (L0, L1, L2...) — L0 accepts direct flushes, L1+ enforce non-overlapping key ranges
+- [ ] Compact L0 → L1 when L0 file count hits threshold (e.g. 4)
+- [ ] Each level is 10x larger than the previous — controls read/write amplification tradeoff
 
 ### Step 5 — Bloom filters
 - [ ] One bloom filter per SSTable — skip files that definitely don't contain the key
@@ -86,8 +91,8 @@ Key files:
 - ~~`u32::to_le_bytes()` / `u32::from_le_bytes()`~~ — learned in Phase 3
 - ~~`BTreeMap`~~ — sorted in-memory structure, understood as ordered map for memtable
 - ~~`std::io::BufWriter`~~ — learned and used in merge for batched writes
-- SSTable format — sorted string table, on-disk sorted key-value segments
-- LSM-tree architecture — how memtable flushes, levels, and compaction fit together
-- Sorted merge (k-way merge) — merging multiple sorted SSTable files into one
+- ~~SSTable format — sorted string table, on-disk sorted key-value segments~~ — learned and implemented
+- ~~LSM-tree architecture — how memtable flushes, levels, and compaction fit together~~ — learned and implemented
+- ~~Sorted merge (k-way merge) — merging multiple sorted SSTable files into one~~ — learned and implemented
 - Bloom filters — probabilistic data structure for fast negative lookups (hash functions, false positive rate, bit array sizing)
 - Sparse index / index block — how SSTables avoid indexing every key (binary search between index points)

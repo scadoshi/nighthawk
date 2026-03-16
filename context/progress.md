@@ -77,6 +77,18 @@
 - [x] Fixed `process()` size tracking — overwriting a Set now decrements old size before adding new
 - [x] All tests updated: inlined single-use bindings, chained `.unwrap()`, consistent naming
 
-### Current test count: 77 passing, 0 ignored
+### Step 4 — SSTable merge/compaction (COMPLETE)
+- [x] `src/log/compact.rs` — `Log::compact()` k-way merge across all SSTables
+- [x] Sorted files newest-to-oldest by timestamp filename; vec index = recency priority
+- [x] Per-iteration: find global minimum key, newest participant wins, all participants advance cursor
+- [x] Mid-loop `flush_to()` when compaction memtable hits 4MB threshold; guarded final flush
+- [x] Original SSTables deleted after compacted output written
+- [x] `MemTable::flush_to(path)` — extracted helper used by both `Log::flush()` and `compact()`
+- [x] `MemTable::should_flush()` — 4MB threshold check, shared constant `FLUSH_THRESHOLD_MB`
+- [x] `Log::flush_count` — initialized from existing SSTable count on startup, incremented each flush
+- [x] Compaction triggered every `COMPACT_EVERY_N_FLUSHES = 10` flushes inside `flush()`
+- [x] `temp_log()` pattern fixed across all test modules — returns `(TempDir, Log)` to keep dir alive
 
-### Next: Step 4 — SSTable merge/compaction
+### Current test count: 81 passing, 0 ignored
+
+### Next: Step 5 — Bloom filters (study how they work first)
