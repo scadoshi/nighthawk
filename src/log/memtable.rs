@@ -4,7 +4,7 @@ use super::{entry::Entry, header::HeaderReader};
 use std::{
     collections::{BTreeMap, btree_map::Values},
     fs::{File, OpenOptions},
-    io::{Seek, SeekFrom},
+    io::{Seek, SeekFrom, Write},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -68,7 +68,13 @@ impl MemTable {
 
     /// Writes all entries in sorted key order to a new timestamped SSTable file in `path`, then clears the memtable.
     pub fn flush_to(&mut self, mut path: PathBuf) -> anyhow::Result<()> {
+        // Insurance
+        if self.is_empty() {
+            return Ok(());
+        }
+        // Ensure file exists
         std::fs::create_dir_all(&path)?;
+        // Generate timestamp file name
         let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros();
         path.push(format!("{:020}.sst", ts));
         let mut file = OpenOptions::new()
@@ -76,11 +82,28 @@ impl MemTable {
             .create(true)
             .write(true)
             .open(path)?;
+        // 10 bits per key is ideal for k=7
+        let bit_count: u32 = self.len() as u32 * 10;
+        let byte_count: u32 = bit_count.div_ceil(8);
+        let mut bloomfilter = vec![0; byte_count as usize];
         for entry in self.values() {
             file.write_entry_with_header(entry)?;
+            // Generate hashes
+            let hash1 = xxh3::hash64_with_seed(entry.key().as_bytes(), 0);
+            let hash2 = xxh3::hash64_with_seed(entry.key().as_bytes(), 1);
+            // Update bloomfilter with k=7
+            for i in 0..7 {
+                let pos = ((hash1.wrapping_add(i).wrapping_mul(hash2)) % bit_count as u64) as usize;
+                bloomfilter[pos / 8] |= 1 << (pos % 8);
+            }
         }
+        // Write bloomfilter and bit_count
+        file.write_all(bloomfilter.as_slice())?;
+        file.write_all(&bit_count.to_le_bytes())?;
+        // Trigger fsync
         file.sync_all()?;
         self.clear();
+        // Return
         Ok(())
     }
 
@@ -287,5 +310,41 @@ mod tests {
         let expected = vec![&set1, &set2, &set3];
         let result: Vec<_> = memtable.values().collect();
         assert_eq!(expected, result);
+    }
+
+    // --- Bloom filter test stubs ---
+
+    #[test]
+    #[ignore]
+    fn flush_writes_bloomfilter_footer_to_sstable() {
+        // Flush a memtable with known keys
+        // Read last 4 bytes of .sst file as u32 little-endian = bit_count
+        // Read bit_count.div_ceil(8) bytes before that = bloom filter bytes
+        // Verify bit_count and bloom filter byte length are correct
+    }
+
+    #[test]
+    #[ignore]
+    fn flush_bloomfilter_size_matches_key_count() {
+        // Flush N keys, read bit_count from footer
+        // Assert bit_count == N * 10
+    }
+
+    #[test]
+    #[ignore]
+    fn bloomfilter_reports_present_for_inserted_key() {
+        // Flush memtable with known keys
+        // Read bloom filter from .sst footer
+        // Hash a key that WAS inserted using same xxh3 double-hashing (k=7)
+        // Check all 7 bit positions are set in the bloom filter
+    }
+
+    #[test]
+    #[ignore]
+    fn bloomfilter_reports_absent_for_missing_key() {
+        // Flush memtable with known keys
+        // Read bloom filter from .sst footer
+        // Hash a key that was NOT inserted using same xxh3 double-hashing (k=7)
+        // Check that at least one of the 7 bit positions is 0
     }
 }

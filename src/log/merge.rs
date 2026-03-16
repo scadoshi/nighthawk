@@ -6,13 +6,13 @@ use std::{
 use super::{Log, entry::Entry, header::HeaderReader, memtable::MemTable};
 
 impl Log {
-    /// Merges all SSTables into a compacted set using a k-way merge.
+    /// Merges all SSTables into a merged set using a k-way merge.
     /// Processes entries in sorted key order across all files simultaneously;
     /// when multiple SSTables contain the same key, the newest file wins.
     /// Intermediate output is flushed to new SSTable files when the 4 MB threshold
     /// is exceeded, with a final flush for any remaining entries.
-    /// All original SSTables are deleted once the compacted output is written.
-    pub fn compact(&mut self) -> anyhow::Result<()> {
+    /// All original SSTables are deleted once the merged output is written.
+    pub fn merge(&mut self) -> anyhow::Result<()> {
         // Get entries and sort desc by path--will correlate to most recent ordering first
         let mut entries: Vec<_> = read_dir(&self.sstables_path)?.flatten().collect();
         entries.sort_by_key(|e| Reverse(e.file_name()));
@@ -98,9 +98,9 @@ mod tests {
     }
 
     #[test]
-    fn compact_with_no_sstables_is_noop() {
+    fn merge_with_no_sstables_is_noop() {
         let (_dir, mut log) = temp_log();
-        log.compact().unwrap();
+        log.merge().unwrap();
         assert!(
             read_dir(&log.sstables_path)
                 .unwrap()
@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_newest_wins_for_duplicate_key() {
+    fn merge_newest_wins_for_duplicate_key() {
         let (_dir, mut log) = temp_log();
         let set1 = Entry::set("a", "1");
         log.write(&set1).unwrap();
@@ -120,12 +120,12 @@ mod tests {
         let set2 = Entry::set("a", "2");
         log.write(&set2).unwrap();
         log.flush().unwrap();
-        log.compact().unwrap();
+        log.merge().unwrap();
         assert_eq!(log.get("a").unwrap().unwrap().value(), set2.value());
     }
 
     #[test]
-    fn compact_preserves_all_unique_keys() {
+    fn merge_preserves_all_unique_keys() {
         let (_dir, mut log) = temp_log();
         let set1 = Entry::set("a", "1");
         log.write(&set1).unwrap();
@@ -133,13 +133,13 @@ mod tests {
         let set2 = Entry::set("b", "2");
         log.write(&set2).unwrap();
         log.flush().unwrap();
-        log.compact().unwrap();
+        log.merge().unwrap();
         log.get("a").unwrap().unwrap();
         log.get("b").unwrap().unwrap();
     }
 
     #[test]
-    fn compact_deletes_original_sstables() {
+    fn merge_deletes_original_sstables() {
         let (_dir, mut log) = temp_log();
         let set1 = Entry::set("a", "1");
         let set2 = Entry::set("b", "2");
@@ -152,7 +152,7 @@ mod tests {
             .flatten()
             .map(|e| e.path())
             .collect();
-        log.compact().unwrap();
+        log.merge().unwrap();
         assert!(
             read_dir(&log.sstables_path)
                 .unwrap()
@@ -162,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_result_readable_via_get() {
+    fn merge_result_readable_via_get() {
         let (_dir, mut log) = temp_log();
         let set1 = Entry::set("a", "1");
         let set2 = Entry::set("b", "2");
@@ -173,14 +173,14 @@ mod tests {
         log.flush().unwrap();
         log.write(&set3).unwrap();
         log.flush().unwrap();
-        log.compact().unwrap();
+        log.merge().unwrap();
         assert_eq!(log.get(set1.key()).unwrap().unwrap(), set1);
         assert_eq!(log.get(set2.key()).unwrap().unwrap(), set2);
         assert_eq!(log.get(set3.key()).unwrap().unwrap(), set3);
     }
 
     #[test]
-    fn compact_reduces_sstable_count() {
+    fn merge_reduces_sstable_count() {
         let (_dir, mut log) = temp_log();
         let set1 = Entry::set("a", "1");
         let set2 = Entry::set("a", "2");
@@ -189,7 +189,7 @@ mod tests {
         log.write(&set2).unwrap();
         log.flush().unwrap();
         let count = read_dir(&log.sstables_path).unwrap().count();
-        log.compact().unwrap();
+        log.merge().unwrap();
         assert!(count > read_dir(&log.sstables_path).unwrap().count());
     }
 }

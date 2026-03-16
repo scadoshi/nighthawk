@@ -1,8 +1,8 @@
 pub mod command;
-pub mod compact;
 pub mod entry;
 pub mod header;
 pub mod memtable;
+pub mod merge;
 
 use entry::Entry;
 use header::{HeaderReader, HeaderWriter};
@@ -21,7 +21,7 @@ pub const MEMTABLE_PATH: &str = "data/memtable";
 /// Directory containing flushed SSTable files.
 pub const SSTABLES_PATH: &str = "data/sstables";
 /// Multiple which flush_count is checked against in order to determine compaction timing
-const COMPACT_EVERY_N_FLUSHES: u64 = 10;
+const MERGE_EVERY_N_FLUSHES: u64 = 10;
 
 /// Append-only log store. Owns the data file and in-memory key-to-entry memtable.
 #[derive(Debug)]
@@ -92,6 +92,9 @@ impl Log {
         entries.sort_by_key(|e| Reverse(e.file_name()));
         for entry in entries {
             let mut file = OpenOptions::new().read(true).open(entry.path())?;
+            // inital bloomfilter reading goes here
+            // the below is linear search this is also where we would eventually build binary
+            // search
             while let Some(entry @ Entry::Set { .. }) = file.read_next_entry_with_header()? {
                 if entry.key() == key.as_ref() {
                     return Ok(Some(entry));
@@ -113,8 +116,8 @@ impl Log {
         self.memtable_file.set_len(0)?;
         self.memtable_file.seek(SeekFrom::Start(0))?;
         self.flush_count += 1;
-        if self.flush_count.is_multiple_of(COMPACT_EVERY_N_FLUSHES) {
-            self.compact()?;
+        if self.flush_count.is_multiple_of(MERGE_EVERY_N_FLUSHES) {
+            self.merge()?;
         }
         Ok(())
     }

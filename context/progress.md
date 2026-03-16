@@ -89,6 +89,39 @@
 - [x] Compaction triggered every `COMPACT_EVERY_N_FLUSHES = 10` flushes inside `flush()`
 - [x] `temp_log()` pattern fixed across all test modules — returns `(TempDir, Log)` to keep dir alive
 
-### Current test count: 81 passing, 0 ignored
+### Step 5 — Bloom filters (IN PROGRESS)
 
-### Next: Step 5 — Bloom filters (study how they work first)
+#### Completed
+- [x] Bloom filter write path in `flush_to()` (`src/log/memtable.rs`)
+- [x] SSTable file layout: `[entries...][bloom_filter bytes][bit_count: 4B (u32 LE)]`
+- [x] Hashing: `xxh3::hash64_with_seed` with seeds 0 and 1, double-hashing to derive k=7 positions
+- [x] Bit array: `Vec<u8>`, sized at `(key_count * 10).div_ceil(8)` bytes (10 bits/key, ~1% FP rate)
+- [x] Bit manipulation: `bloomfilter[pos / 8] |= 1 << (pos % 8)` to set, `& (1 << ...)` to check
+- [x] 4 bloom filter test stubs added (`#[ignore]`) in `src/log/memtable.rs`
+
+#### Known bug to fix
+- [ ] Line 96 in `flush_to()`: double-hashing formula has wrong precedence — `hash1.wrapping_add(i).wrapping_mul(hash2)` computes `(h1+i)*h2` but should be `h1 + i*h2` → fix to `hash1.wrapping_add((i as u64).wrapping_mul(hash2))`
+
+#### TODO — read path
+- [ ] `Log::get()` in `src/log/mod.rs` — before scanning SSTable entries, read bloom filter from footer:
+  - Seek to EOF-4, read `bit_count` as u32 LE
+  - Seek to EOF-4-byte_count, read bloom filter bytes
+  - Hash the lookup key with same xxh3 double-hashing, check all 7 bit positions
+  - If any bit is 0 → skip this SSTable entirely (key definitely not present)
+  - If all bits are 1 → proceed with linear scan of entries
+- [ ] Bound entry reading region: stop reading entries at `file_len - byte_count - 4` so bloom filter bytes aren't misinterpreted as entries
+- [ ] Same boundary logic needed in `merge` (`src/log/merge.rs`) when reading SSTables for compaction — skip bloom filter bytes, don't need to check them
+
+#### TODO — testing
+- [ ] Fill in the 4 `#[ignore]` bloom filter test stubs in `src/log/memtable.rs`
+- [ ] Integration test: `get()` skips SSTable when bloom filter says absent
+- [ ] Integration test: `get()` still finds key when bloom filter says maybe-present
+
+#### Design decisions made
+- One bloom filter per SSTable (not per block)
+- Bloom filter stored as footer inside .sst file (not separate file)
+- Footer format: bloom bytes followed by 4-byte bit_count — read bit_count first to know how far back to read
+- xxh3 chosen over crc32 for bloom hashing (better distribution); crc32fast stays for WAL checksums
+- k=7 hashes, 10 bits/key is the standard config (~1% false positive rate)
+
+### Current test count: 81 passing, 4 ignored (bloom filter stubs)
