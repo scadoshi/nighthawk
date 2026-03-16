@@ -327,19 +327,21 @@ mod tests {
         ));
     }
 
-    fn temp_log() -> anyhow::Result<Log> {
-        let dir = tempdir()?;
-        Log::new(
+    fn temp_log() -> (tempfile::TempDir, Log) {
+        let dir = tempdir().unwrap();
+        let log = Log::new(
             dir.path(),
             dir.path().join("test.log"),
             dir.path().join("sstables"),
             true,
         )
+        .unwrap();
+        (dir, log)
     }
 
     #[test]
     fn execute_set_adds_to_memtable() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         let cmd = Command::set("a", "1");
         let key = cmd.key().unwrap().to_string();
         log.execute(cmd).unwrap();
@@ -349,7 +351,7 @@ mod tests {
 
     #[test]
     fn execute_get_existing_key() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         let set = Command::set("a", "1");
         let key = set.key().unwrap().to_string();
         log.execute(set).unwrap();
@@ -358,13 +360,13 @@ mod tests {
 
     #[test]
     fn execute_get_missing_key() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         log.execute(Command::get("a")).unwrap();
     }
 
     #[test]
     fn execute_delete_existing_key_removes_from_memtable() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         let set = Command::set("a", "1");
         let key = set.key().unwrap().to_string();
         log.execute(set).unwrap();
@@ -374,7 +376,7 @@ mod tests {
 
     #[test]
     fn execute_delete_missing_key() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         log.execute(Command::delete("a")).unwrap();
         assert!(log.memtable.is_empty());
     }
@@ -398,14 +400,14 @@ mod tests {
 
     #[test]
     fn execute_quit_is_noop() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         log.execute(Command::Quit).unwrap();
         assert!(log.memtable.is_empty());
     }
 
     #[test]
     fn execute_help_is_noop() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         log.execute(Command::Help).unwrap();
         assert!(log.memtable.is_empty());
     }
@@ -430,7 +432,7 @@ mod tests {
 
     #[test]
     fn execute_get_finds_key_in_sstable_after_flush() {
-        let mut log = temp_log().unwrap();
+        let (_dir, mut log) = temp_log();
         let set = Command::set("a", "1");
         let key = set.key().unwrap().to_string();
         log.execute(set).unwrap();
