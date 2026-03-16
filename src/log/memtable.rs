@@ -1,8 +1,12 @@
+use crate::log::header::HeaderWriter;
+
 use super::{entry::Entry, header::HeaderReader};
 use std::{
     collections::{BTreeMap, btree_map::Values},
-    fs::File,
+    fs::{File, OpenOptions},
     io::{Seek, SeekFrom},
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 /// In-memory sorted map of the most recent entry per key. Tracks byte size for flush triggering.
@@ -12,8 +16,10 @@ pub struct MemTable {
     size: u64,
 }
 
+pub const FLUSH_THRESHOLD_MB: u64 = 4;
+
 impl MemTable {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let inner = BTreeMap::<String, Entry>::new();
         let size = 0;
         Self { inner, size }
@@ -53,6 +59,29 @@ impl MemTable {
                 Ok(self.inner.remove(delete.key()))
             }
         }
+    }
+
+    /// Returns `true` if the memtable has exceeded the 4 MB flush threshold.
+    pub fn should_flush(&self) -> bool {
+        self.size() > FLUSH_THRESHOLD_MB * (1 << 20)
+    }
+
+    /// Writes all entries in sorted key order to a new timestamped SSTable file in `path`, then clears the memtable.
+    pub fn flush_to(&mut self, mut path: PathBuf) -> anyhow::Result<()> {
+        std::fs::create_dir_all(&path)?;
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros();
+        path.push(format!("{:020}.sst", ts));
+        let mut file = OpenOptions::new()
+            .truncate(true)
+            .create(true)
+            .write(true)
+            .open(path)?;
+        for entry in self.values() {
+            file.write_entry_with_header(entry)?;
+        }
+        file.sync_all()?;
+        self.clear();
+        Ok(())
     }
 
     /// Removes all entries and resets byte size to zero.
