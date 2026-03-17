@@ -43,6 +43,10 @@ See `context/progress.md` for full detail. Memtable, flush, read path, compactio
 - [ ] Doc comments for `BloomFilter`, `BloomFilterReader`, `SSTable` in `src/log/sstable.rs`
 - [ ] Clean up dead imports in `compact.rs`: `File`, `OpenOptions`, `HeaderReader`
 - [ ] Fix `mod.rs`: `pub mod merge` → `pub mod compact`, `self.merge()` → `self.compact()`
+- [ ] Use `BloomFilter` struct in the write path — `flush_to()` in `memtable.rs` currently
+  uses a raw `Vec<u8>` for the bloom filter bits; swap it for `BloomFilter::blank(bit_count)`
+  so the same model is used for both reading and writing. `BloomFilter` already has `blank()`
+  and `Deref<Target = [u8]>` — wire those up in `flush_to()` instead of the raw vec.
 
 ### Step 6 — WalEntry / SstEntry type split (NEXT)
 
