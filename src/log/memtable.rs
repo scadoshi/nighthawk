@@ -142,10 +142,9 @@ impl MemTable {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::read_dir, io::Read};
-
     use super::*;
     use crate::log::{Log, header::HeaderWriter};
+    use std::{fs::read_dir, io::Read};
 
     #[test]
     fn from_file_empty() {

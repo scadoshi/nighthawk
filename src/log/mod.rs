@@ -60,7 +60,9 @@ impl Log {
             .open(&wal_path)?;
         let memtable = MemTable::from_file(&mut wal_file)?;
         // SSTable count equates to flush count
-        let flush_count = read_dir(&sstables_path)?.count() as u64;
+        let flush_count = read_dir(&sstables_path)?
+            .collect::<Result<Vec<_>, _>>()?
+            .len() as u64;
         // Return
         Ok(Self {
             wal_path,
@@ -88,10 +90,8 @@ impl Log {
         }
         // Then if not found sift through SSTables
         // Only does linear search for now
-        let Ok(dir_entries) = read_dir(&self.sstables_path) else {
-            return Ok(None);
-        };
-        let mut dir_entries: Vec<_> = dir_entries.flatten().collect();
+        let mut dir_entries: Vec<_> =
+            read_dir(&self.sstables_path)?.collect::<Result<Vec<_>, _>>()?;
         dir_entries.sort_by_key(|e| Reverse(e.file_name()));
         'entry_loop: for dir_entry in dir_entries {
             let Some(mut sstable) = SSTable::from_path(dir_entry.path())? else {

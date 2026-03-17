@@ -47,6 +47,9 @@ See `context/progress.md` for full detail. Memtable, flush, read path, compactio
   uses a raw `Vec<u8>` for the bloom filter bits; swap it for `BloomFilter::blank(bit_count)`
   so the same model is used for both reading and writing. `BloomFilter` already has `blank()`
   and `Deref<Target = [u8]>` — wire those up in `flush_to()` instead of the raw vec.
+- [ ] Propagate `read_dir` inner errors in production code (like `compact.rs` does with `collect::<Result<_, _>>()?`):
+  - `mod.rs:63` — `read_dir(&sstables_path)?.count()` silently swallows per-entry I/O errors; collect and count instead
+  - `mod.rs:91-94` — `get()` iterates dir entries but needs error propagation on individual entries (currently uses `let Ok(...) else` for missing dir which is fine, but inner iteration should propagate)
 
 ### Step 6 — WalEntry / SstEntry type split (NEXT)
 
