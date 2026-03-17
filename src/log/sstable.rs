@@ -94,14 +94,6 @@ impl SSTable {
         &self.bloom_filter
     }
 
-    pub fn bloom_filter_pos(&self) -> u64 {
-        self.bloom_filter_pos
-    }
-
-    pub fn file(&self) -> &File {
-        &self.file
-    }
-
     pub fn read_next_entry(&mut self) -> anyhow::Result<Option<Entry>> {
         if self.file.stream_position()? > self.bloom_filter_pos {
             return Ok(None);
