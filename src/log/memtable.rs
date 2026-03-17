@@ -93,7 +93,8 @@ impl MemTable {
             let hash2 = xxh3::hash64_with_seed(entry.key().as_bytes(), 1);
             // Update bloomfilter with k=7
             for i in 0..7 {
-                let pos = ((hash1.wrapping_add(i).wrapping_mul(hash2)) % bit_count as u64) as usize;
+                let pos = (hash1.wrapping_add((i as u64).wrapping_mul(hash2)) % bit_count as u64)
+                    as usize;
                 bloomfilter[pos / 8] |= 1 << (pos % 8);
             }
         }
@@ -141,8 +142,10 @@ impl MemTable {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs::read_dir, io::Read};
+
     use super::*;
-    use crate::log::header::HeaderWriter;
+    use crate::log::{Log, header::HeaderWriter};
 
     #[test]
     fn from_file_empty() {
@@ -312,39 +315,121 @@ mod tests {
         assert_eq!(expected, result);
     }
 
-    // --- Bloom filter test stubs ---
+    fn temp_log() -> (tempfile::TempDir, Log) {
+        let dir = tempfile::tempdir().unwrap();
+        let log = Log::new(
+            dir.path(),
+            dir.path().join("memtable"),
+            dir.path().join("sstables"),
+            true,
+        )
+        .unwrap();
+        (dir, log)
+    }
 
     #[test]
-    #[ignore]
     fn flush_writes_bloomfilter_footer_to_sstable() {
-        // Flush a memtable with known keys
-        // Read last 4 bytes of .sst file as u32 little-endian = bit_count
-        // Read bit_count.div_ceil(8) bytes before that = bloom filter bytes
-        // Verify bit_count and bloom filter byte length are correct
+        let (_dir, mut log) = temp_log();
+        let set1 = Entry::set("a", "1");
+        let set2 = Entry::set("b", "2");
+        let set3 = Entry::set("c", "3");
+        log.write(&set1).unwrap();
+        log.write(&set2).unwrap();
+        log.write(&set3).unwrap();
+        log.flush().unwrap();
+        let sstable_path = read_dir(log.sstables_path)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        let mut file = File::open(sstable_path).unwrap();
+        let (bit_count, byte_count) = {
+            file.seek(SeekFrom::End(-4)).unwrap();
+            let mut bytes = Vec::<u8>::new();
+            file.read_to_end(&mut bytes).unwrap();
+            let bit_count = u32::from_le_bytes(bytes.as_slice().try_into().unwrap()) as usize;
+            let byte_count = bit_count.div_ceil(8);
+            file.seek(SeekFrom::End(-(byte_count as i64) - 4)).unwrap();
+            (bit_count, byte_count)
+        };
+        // bit count should equals key count multiplied by ten
+        assert_eq!(bit_count, 30);
+        // byte count rounds up to the nearest byte from there
+        assert_eq!(byte_count, 4);
     }
 
     #[test]
-    #[ignore]
-    fn flush_bloomfilter_size_matches_key_count() {
-        // Flush N keys, read bit_count from footer
-        // Assert bit_count == N * 10
-    }
-
-    #[test]
-    #[ignore]
     fn bloomfilter_reports_present_for_inserted_key() {
-        // Flush memtable with known keys
-        // Read bloom filter from .sst footer
-        // Hash a key that WAS inserted using same xxh3 double-hashing (k=7)
-        // Check all 7 bit positions are set in the bloom filter
+        let (_dir, mut log) = temp_log();
+        let set = Entry::set("a", "1");
+        log.write(&set).unwrap();
+        log.flush().unwrap();
+        let sstable_path = read_dir(log.sstables_path)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        let mut file = File::open(sstable_path).unwrap();
+        let (bit_count, byte_count) = {
+            file.seek(SeekFrom::End(-4)).unwrap();
+            let mut bytes = Vec::<u8>::new();
+            file.read_to_end(&mut bytes).unwrap();
+            let bit_count = u32::from_le_bytes(bytes.as_slice().try_into().unwrap()) as usize;
+            let byte_count = bit_count.div_ceil(8);
+            file.seek(SeekFrom::End(-(byte_count as i64) - 4)).unwrap();
+            (bit_count, byte_count)
+        };
+        let bloomfilter: Vec<u8> = {
+            let mut bytes = Vec::<u8>::new();
+            file.read_to_end(&mut bytes).unwrap();
+            file.seek(SeekFrom::Start(0)).unwrap();
+            bytes.into_iter().take(byte_count).collect()
+        };
+        let hash1 = xxh3::hash64_with_seed(set.key().as_bytes(), 0);
+        let hash2 = xxh3::hash64_with_seed(set.key().as_bytes(), 1);
+        for i in 0..7 {
+            let pos =
+                (hash1.wrapping_add((i as u64).wrapping_mul(hash2)) % bit_count as u64) as usize;
+            assert_ne!(bloomfilter[pos / 8] & 1 << (pos % 8), 0);
+        }
     }
 
     #[test]
-    #[ignore]
     fn bloomfilter_reports_absent_for_missing_key() {
-        // Flush memtable with known keys
-        // Read bloom filter from .sst footer
-        // Hash a key that was NOT inserted using same xxh3 double-hashing (k=7)
-        // Check that at least one of the 7 bit positions is 0
+        let (_dir, mut log) = temp_log();
+        log.write(&Entry::set("a", "1")).unwrap();
+        log.flush().unwrap();
+        let sstable_path = read_dir(log.sstables_path)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        let mut file = File::open(sstable_path).unwrap();
+        let (bit_count, byte_count) = {
+            file.seek(SeekFrom::End(-4)).unwrap();
+            let mut bytes = Vec::<u8>::new();
+            file.read_to_end(&mut bytes).unwrap();
+            let bit_count = u32::from_le_bytes(bytes.as_slice().try_into().unwrap()) as usize;
+            let byte_count = bit_count.div_ceil(8);
+            file.seek(SeekFrom::End(-(byte_count as i64) - 4)).unwrap();
+            (bit_count, byte_count)
+        };
+        let bloomfilter: Vec<u8> = {
+            let mut bytes = Vec::<u8>::new();
+            file.read_to_end(&mut bytes).unwrap();
+            file.seek(SeekFrom::Start(0)).unwrap();
+            bytes.into_iter().take(byte_count).collect()
+        };
+        let missing_key = "z";
+        let hash1 = xxh3::hash64_with_seed(missing_key.as_bytes(), 0);
+        let hash2 = xxh3::hash64_with_seed(missing_key.as_bytes(), 1);
+        assert!((0..7).any(|i| {
+            let pos =
+                (hash1.wrapping_add((i as u64).wrapping_mul(hash2)) % bit_count as u64) as usize;
+            bloomfilter[pos / 8] & 1 << (pos % 8) == 0
+        }));
     }
 }

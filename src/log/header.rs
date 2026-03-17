@@ -46,19 +46,19 @@ pub trait HeaderReader {
     /// Reads the next valid entry from the current cursor position.
     /// Scans byte-by-byte on corruption to find the next valid magic + checksum match.
     fn read_next_entry_with_header(&mut self) -> anyhow::Result<Option<Entry>>;
+    fn contains_entry_with_header(&mut self) -> anyhow::Result<bool>;
 }
 
 impl<R: Read + Seek> HeaderReader for R {
     fn read_next_entry_with_header(&mut self) -> anyhow::Result<Option<Entry>> {
-        let start_from = self.stream_position()?;
+        let pos = self.stream_position()?;
         let buf_len = {
-            self.seek(SeekFrom::Start(0))?;
-            let mut bytes = Vec::<u8>::new();
-            self.read_to_end(&mut bytes)?;
-            self.seek(SeekFrom::Start(start_from))?;
-            bytes.len() as u64
+            self.seek(SeekFrom::End(0))?;
+            let buf_len = self.stream_position()?;
+            self.seek(SeekFrom::Start(pos))?;
+            buf_len
         };
-        if start_from >= buf_len {
+        if pos >= buf_len {
             return Ok(None);
         }
         let mut bytes = Vec::<u8>::new();
@@ -67,7 +67,7 @@ impl<R: Read + Seek> HeaderReader for R {
         while p < bytes.len() {
             match bytes[p..].try_into_entry_with_len() {
                 Ok((entry, len)) => {
-                    self.seek(SeekFrom::Start(start_from + p as u64 + len as u64))?;
+                    self.seek(SeekFrom::Start(pos + p as u64 + len as u64))?;
                     return Ok(Some(entry));
                 }
                 // Corruption recovery: advance one byte and retry.
@@ -75,6 +75,14 @@ impl<R: Read + Seek> HeaderReader for R {
             }
         }
         Ok(None)
+    }
+
+    fn contains_entry_with_header(&mut self) -> anyhow::Result<bool> {
+        let pos = self.stream_position()?;
+        self.seek(SeekFrom::Start(0))?;
+        let has_entry = self.read_next_entry_with_header()?.is_some();
+        self.seek(SeekFrom::Start(pos))?;
+        Ok(has_entry)
     }
 }
 
@@ -155,7 +163,10 @@ mod tests {
 
     #[test]
     fn try_into_entry_with_header_err_not_enough_bytes() {
-        assert!(matches!(0_u32.to_le_bytes().try_into_entry_with_len(), Err(CorruptionType::NotEnoughBytes)));
+        assert!(matches!(
+            0_u32.to_le_bytes().try_into_entry_with_len(),
+            Err(CorruptionType::NotEnoughBytes)
+        ));
     }
 
     #[test]
@@ -180,7 +191,10 @@ mod tests {
         let checksum = crc32fast::hash(&set_bytes);
         let len = set_bytes.len() as u32;
         let bytes = entry_bytes_from_parts(0_u16, checksum, len, set_bytes.as_slice());
-        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::MagicBytesMismatch)));
+        assert!(matches!(
+            bytes.try_into_entry_with_len(),
+            Err(CorruptionType::MagicBytesMismatch)
+        ));
     }
 
     #[test]
@@ -189,7 +203,10 @@ mod tests {
         let set_bytes = wincode::serialize(&set).unwrap();
         let len = set_bytes.len() as u32;
         let bytes = entry_bytes_from_parts(MAGIC, 0_u32, len, set_bytes.as_slice());
-        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::ChecksumMismatch)));
+        assert!(matches!(
+            bytes.try_into_entry_with_len(),
+            Err(CorruptionType::ChecksumMismatch)
+        ));
     }
 
     #[test]
@@ -200,7 +217,10 @@ mod tests {
         let garbage = vec![0xFF; real_len];
         let checksum = crc32fast::hash(&garbage);
         let bytes = entry_bytes_from_parts(MAGIC, checksum, real_len as u32, &garbage);
-        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::EntryParseError)));
+        assert!(matches!(
+            bytes.try_into_entry_with_len(),
+            Err(CorruptionType::EntryParseError)
+        ));
     }
 
     #[test]
@@ -225,7 +245,10 @@ mod tests {
         let checksum = crc32fast::hash(&delete_bytes);
         let len = delete_bytes.len() as u32;
         let bytes = entry_bytes_from_parts(0_u16, checksum, len, delete_bytes.as_slice());
-        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::MagicBytesMismatch)));
+        assert!(matches!(
+            bytes.try_into_entry_with_len(),
+            Err(CorruptionType::MagicBytesMismatch)
+        ));
     }
 
     #[test]
@@ -234,7 +257,10 @@ mod tests {
         let delete_bytes = wincode::serialize(&delete).unwrap();
         let len = delete_bytes.len() as u32;
         let bytes = entry_bytes_from_parts(MAGIC, 0_u32, len, delete_bytes.as_slice());
-        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::ChecksumMismatch)));
+        assert!(matches!(
+            bytes.try_into_entry_with_len(),
+            Err(CorruptionType::ChecksumMismatch)
+        ));
     }
 
     #[test]
@@ -244,7 +270,10 @@ mod tests {
         let garbage = vec![0xFF; real_len];
         let checksum = crc32fast::hash(&garbage);
         let bytes = entry_bytes_from_parts(MAGIC, checksum, real_len as u32, &garbage);
-        assert!(matches!(bytes.try_into_entry_with_len(), Err(CorruptionType::EntryParseError)));
+        assert!(matches!(
+            bytes.try_into_entry_with_len(),
+            Err(CorruptionType::EntryParseError)
+        ));
     }
 
     #[test]

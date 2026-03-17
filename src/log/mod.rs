@@ -1,11 +1,12 @@
 pub mod command;
+pub mod compact;
 pub mod entry;
 pub mod header;
 pub mod memtable;
-pub mod merge;
+pub mod sstable;
 
 use entry::Entry;
-use header::{HeaderReader, HeaderWriter};
+use header::HeaderWriter;
 use memtable::MemTable;
 use std::{
     cmp::Reverse,
@@ -14,6 +15,8 @@ use std::{
     path::PathBuf,
 };
 
+use crate::log::sstable::SSTable;
+
 /// Root directory for all persisted data.
 pub const DATA_PATH: &str = "data";
 /// Path to the write-ahead log (WAL) file.
@@ -21,7 +24,7 @@ pub const WAL_PATH: &str = "data/wal";
 /// Directory containing flushed SSTable files.
 pub const SSTABLES_PATH: &str = "data/sstables";
 /// Multiple which flush_count is checked against in order to determine compaction timing
-const MERGE_EVERY_N_FLUSHES: u64 = 10;
+const COMPACT_EVERY_N_FLUSHES: u64 = 10;
 
 /// Append-only log store. Owns the data file and in-memory key-to-entry memtable.
 #[derive(Debug)]
@@ -85,17 +88,29 @@ impl Log {
         }
         // Then if not found sift through SSTables
         // Only does linear search for now
-        let Ok(entries) = read_dir(&self.sstables_path) else {
+        let Ok(dir_entries) = read_dir(&self.sstables_path) else {
             return Ok(None);
         };
-        let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-        entries.sort_by_key(|e| Reverse(e.file_name()));
-        for entry in entries {
-            let mut file = OpenOptions::new().read(true).open(entry.path())?;
-            // inital bloomfilter reading goes here
-            // the below is linear search this is also where we would eventually build binary
-            // search
-            while let Some(entry @ Entry::Set { .. }) = file.read_next_entry_with_header()? {
+        let mut dir_entries: Vec<_> = dir_entries.flatten().collect();
+        dir_entries.sort_by_key(|e| Reverse(e.file_name()));
+        'entry_loop: for dir_entry in dir_entries {
+            let Some(mut sstable) = SSTable::from_path(dir_entry.path())? else {
+                continue;
+            };
+            // Generate hashes to check in bloom filter
+            let hash1 = xxh3::hash64_with_seed(key.as_ref().as_bytes(), 0);
+            let hash2 = xxh3::hash64_with_seed(key.as_ref().as_bytes(), 1);
+            for i in 0..7 {
+                let pos = (hash1.wrapping_add((i as u64).wrapping_mul(hash2))
+                    % sstable.bloom_filter().bit_count() as u64) as usize;
+                if sstable.bloom_filter()[pos / 8] & 1 << (pos % 8) == 0 {
+                    continue 'entry_loop;
+                }
+            }
+
+            // SSTable is may contain key therefore you may read it
+            while let Some(entry) = sstable.read_next_entry()? {
+                assert!(matches!(entry, Entry::Set { .. }));
                 if entry.key() == key.as_ref() {
                     return Ok(Some(entry));
                 }
@@ -116,8 +131,8 @@ impl Log {
         self.wal_file.set_len(0)?;
         self.wal_file.seek(SeekFrom::Start(0))?;
         self.flush_count += 1;
-        if self.flush_count.is_multiple_of(MERGE_EVERY_N_FLUSHES) {
-            self.merge()?;
+        if self.flush_count.is_multiple_of(COMPACT_EVERY_N_FLUSHES) {
+            self.compact()?;
         }
         Ok(())
     }
@@ -252,5 +267,20 @@ mod tests {
             .filter_map(|e| e.ok())
             .any(|e| e.path().extension().is_some_and(|ext| ext == "sst"));
         assert!(!sst_exists);
+    }
+
+    #[test]
+    fn get_returns_none_for_absent_key_across_multiple_sstables() {
+        let (_dir, mut log) = temp_log();
+        let set1 = Entry::set("a", "1");
+        let set2 = Entry::set("b", "2");
+        let set3 = Entry::set("c", "3");
+        log.write(&set1).unwrap();
+        log.flush().unwrap();
+        log.write(&set2).unwrap();
+        log.flush().unwrap();
+        log.write(&set3).unwrap();
+        log.flush().unwrap();
+        assert!(log.get("d").unwrap().is_none());
     }
 }
