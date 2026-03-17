@@ -17,7 +17,7 @@ use std::{
 /// Root directory for all persisted data.
 pub const DATA_PATH: &str = "data";
 /// Path to the write-ahead log (WAL) file.
-pub const MEMTABLE_PATH: &str = "data/memtable";
+pub const WAL_PATH: &str = "data/wal";
 /// Directory containing flushed SSTable files.
 pub const SSTABLES_PATH: &str = "data/sstables";
 /// Multiple which flush_count is checked against in order to determine compaction timing
@@ -26,8 +26,8 @@ const MERGE_EVERY_N_FLUSHES: u64 = 10;
 /// Append-only log store. Owns the data file and in-memory key-to-entry memtable.
 #[derive(Debug)]
 pub struct Log {
-    memtable_path: PathBuf,
-    memtable_file: File,
+    wal_path: PathBuf,
+    wal_file: File,
     memtable: MemTable,
     sstables_path: PathBuf,
     flush_count: u64,
@@ -38,30 +38,30 @@ impl Log {
     /// informing whether to overwrite or append existing file content.
     pub fn new(
         data_path: impl Into<PathBuf>,
-        memtable_path: impl Into<PathBuf>,
+        wal_path: impl Into<PathBuf>,
         sstables_path: impl Into<PathBuf>,
         truncate: bool,
     ) -> anyhow::Result<Self> {
         // Initialize paths and dirs
         let data_path = data_path.into();
-        let memtable_path = memtable_path.into();
+        let wal_path = wal_path.into();
         let sstables_path = sstables_path.into();
         create_dir_all(&data_path)?;
         create_dir_all(&sstables_path)?;
         // Open WAL and initialize memtable
-        let mut memtable_file = OpenOptions::new()
+        let mut wal_file = OpenOptions::new()
             .create(true)
             .truncate(truncate)
             .read(true)
             .write(true)
-            .open(&memtable_path)?;
-        let memtable = MemTable::from_file(&mut memtable_file)?;
+            .open(&wal_path)?;
+        let memtable = MemTable::from_file(&mut wal_file)?;
         // SSTable count equates to flush count
         let flush_count = read_dir(&sstables_path)?.count() as u64;
         // Return
         Ok(Self {
-            memtable_file,
-            memtable_path,
+            wal_path,
+            wal_file,
             memtable,
             sstables_path,
             flush_count,
@@ -70,8 +70,8 @@ impl Log {
 
     /// Appends an entry with header to the WAL and syncs to disk, then applies it to the memtable.
     pub fn write(&mut self, entry: &Entry) -> anyhow::Result<()> {
-        self.memtable_file.write_entry_with_header(entry)?;
-        self.memtable_file.sync_all()?;
+        self.wal_file.write_entry_with_header(entry)?;
+        self.wal_file.sync_all()?;
         self.memtable.process(entry)?;
         Ok(())
     }
@@ -113,8 +113,8 @@ impl Log {
     /// then truncates the WAL and clears the memtable.
     pub fn flush(&mut self) -> anyhow::Result<()> {
         self.memtable.flush_to(self.sstables_path.clone())?;
-        self.memtable_file.set_len(0)?;
-        self.memtable_file.seek(SeekFrom::Start(0))?;
+        self.wal_file.set_len(0)?;
+        self.wal_file.seek(SeekFrom::Start(0))?;
         self.flush_count += 1;
         if self.flush_count.is_multiple_of(MERGE_EVERY_N_FLUSHES) {
             self.merge()?;
@@ -235,7 +235,7 @@ mod tests {
         let set = Entry::set("a", "1");
         log.write(&set).unwrap();
         log.flush().unwrap();
-        assert!(log.memtable_file.metadata().unwrap().len() == 0);
+        assert!(log.wal_file.metadata().unwrap().len() == 0);
     }
 
     #[test]
@@ -245,7 +245,7 @@ mod tests {
         log.write(&set).unwrap();
         log.maybe_flush().unwrap();
         assert!(!log.memtable.is_empty());
-        assert!(log.memtable_file.metadata().unwrap().len() != 0);
+        assert!(log.wal_file.metadata().unwrap().len() != 0);
         let sst_exists = read_dir(&log.sstables_path)
             .into_iter()
             .flatten()

@@ -1,6 +1,6 @@
 use super::{
     log::{
-        DATA_PATH, Log, MEMTABLE_PATH, SSTABLES_PATH,
+        DATA_PATH, Log, SSTABLES_PATH, WAL_PATH,
         command::{Command, Execute},
     },
     tui,
@@ -9,7 +9,7 @@ use super::{
 /// Opens the log and runs the REPL until quit.
 pub fn run() -> anyhow::Result<()> {
     tui::welcome();
-    let mut log = Log::new(DATA_PATH, MEMTABLE_PATH, SSTABLES_PATH, false)?;
+    let mut log = Log::new(DATA_PATH, WAL_PATH, SSTABLES_PATH, false)?;
     loop {
         let command = Command::unfallible_get();
         if matches!(command, Command::Quit) {
