@@ -1,6 +1,8 @@
-use crate::log::header::HeaderWriter;
-
-use super::{entry::Entry, header::HeaderReader};
+use crate::log::{
+    entry::Entry,
+    header::{reader::HeaderReader, writer::HeaderWriter},
+    sstable::bloom_filter::BloomFilter,
+};
 use std::{
     collections::{BTreeMap, btree_map::Values},
     fs::{File, OpenOptions},
@@ -16,9 +18,11 @@ pub struct MemTable {
     size: u64,
 }
 
+/// Size threshold in mebibytes above which the memtable should be flushed to an SSTable.
 pub const FLUSH_THRESHOLD_MB: u64 = 4;
 
 impl MemTable {
+    /// Creates a new empty `MemTable` with zero tracked size.
     pub fn new() -> Self {
         let inner = BTreeMap::<String, Entry>::new();
         let size = 0;
@@ -29,8 +33,8 @@ impl MemTable {
     pub fn from_file(file: &mut File) -> anyhow::Result<Self> {
         let mut memtable = Self::new();
         file.seek(SeekFrom::Start(0))?;
-        while let Ok(Some(entry)) = file.read_next_entry_with_header() {
-            memtable.process(&entry)?;
+        while let Ok(Some(entry)) = file.header_read_next() {
+            memtable.process(entry)?;
         }
         Ok(memtable)
     }
@@ -40,25 +44,15 @@ impl MemTable {
         self.size
     }
 
-    /// Applies an entry: inserts for `Set`, removes for `Delete`. Updates byte size tracking.
+    /// Applies an entry: inserts for both `Set` and `Delete` (tombstone). Updates byte size tracking.
     /// Returns the previous entry for the key, if any.
-    pub fn process(&mut self, entry: impl Into<Entry>) -> anyhow::Result<Option<Entry>> {
-        match entry.into() {
-            set @ Entry::Set { .. } => {
-                if let Some(previous) = self.inner.get(set.key()) {
-                    self.size -=
-                        previous.key().len() as u64 + wincode::serialize(&previous)?.len() as u64;
-                }
-                self.size += set.key().len() as u64 + wincode::serialize(&set)?.len() as u64;
-                Ok(self.inner.insert(set.key().to_owned(), set))
-            }
-            delete @ Entry::Delete { .. } => {
-                if let Some(set) = self.inner.get(delete.key()) {
-                    self.size -= set.key().len() as u64 + wincode::serialize(&set)?.len() as u64;
-                }
-                Ok(self.inner.remove(delete.key()))
-            }
+    pub fn process(&mut self, entry: Entry) -> anyhow::Result<Option<Entry>> {
+        if let Some(previous) = self.inner.get(entry.key()) {
+            self.size -=
+                previous.key().len() as u64 + wincode::serialize(&previous)?.len() as u64;
         }
+        self.size += entry.key().len() as u64 + wincode::serialize(&entry)?.len() as u64;
+        Ok(self.inner.insert(entry.key().to_owned(), entry))
     }
 
     /// Returns `true` if the memtable has exceeded the 4 MB flush threshold.
@@ -84,22 +78,13 @@ impl MemTable {
             .open(path)?;
         // 10 bits per key is ideal for k=7
         let bit_count: u32 = self.len() as u32 * 10;
-        let byte_count: u32 = bit_count.div_ceil(8);
-        let mut bloomfilter = vec![0; byte_count as usize];
+        let mut bloom_filter = BloomFilter::new(bit_count as usize);
         for entry in self.values() {
-            file.write_entry_with_header(entry)?;
-            // Generate hashes
-            let hash1 = xxh3::hash64_with_seed(entry.key().as_bytes(), 0);
-            let hash2 = xxh3::hash64_with_seed(entry.key().as_bytes(), 1);
-            // Update bloomfilter with k=7
-            for i in 0..7 {
-                let pos = (hash1.wrapping_add((i as u64).wrapping_mul(hash2)) % bit_count as u64)
-                    as usize;
-                bloomfilter[pos / 8] |= 1 << (pos % 8);
-            }
+            file.header_write(entry)?;
+            bloom_filter.insert(entry.key().as_bytes());
         }
         // Write bloomfilter and bit_count
-        file.write_all(bloomfilter.as_slice())?;
+        file.write_all(&bloom_filter)?;
         file.write_all(&bit_count.to_le_bytes())?;
         // Trigger fsync
         file.sync_all()?;
@@ -143,7 +128,7 @@ impl MemTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::log::{Log, header::HeaderWriter};
+    use crate::log::{Log, header::writer::HeaderWriter};
     use std::{fs::read_dir, io::Read};
 
     #[test]
@@ -157,21 +142,23 @@ mod tests {
     fn from_file_single_set() {
         let mut file = tempfile::tempfile().unwrap();
         let set = Entry::set("a", "1");
-        file.write_entry_with_header(&set).unwrap();
+        file.header_write(&set).unwrap();
         let memtable = MemTable::from_file(&mut file).unwrap();
         assert_eq!(memtable.len(), 1);
         assert!(memtable.contains_key(set.key()));
     }
 
     #[test]
-    fn from_file_set_then_delete_removes_key() {
+    fn from_file_set_then_delete_stores_tombstone() {
         let mut file = tempfile::tempfile().unwrap();
         let set = Entry::set("a", "1");
         let delete = Entry::delete("a");
-        file.write_entry_with_header(&set).unwrap();
-        file.write_entry_with_header(&delete).unwrap();
+        file.header_write(&set).unwrap();
+        file.header_write(&delete).unwrap();
         let memtable = MemTable::from_file(&mut file).unwrap();
-        assert!(memtable.is_empty());
+        assert_eq!(memtable.len(), 1);
+        assert!(memtable.contains_key("a"));
+        assert!(matches!(memtable.get("a").unwrap(), Entry::Delete { .. }));
     }
 
     #[test]
@@ -180,9 +167,9 @@ mod tests {
         let a = Entry::set("a", "1");
         let b = Entry::set("b", "2");
         let c = Entry::set("c", "3");
-        file.write_entry_with_header(&a).unwrap();
-        file.write_entry_with_header(&b).unwrap();
-        file.write_entry_with_header(&c).unwrap();
+        file.header_write(&a).unwrap();
+        file.header_write(&b).unwrap();
+        file.header_write(&c).unwrap();
         let memtable = MemTable::from_file(&mut file).unwrap();
         assert_eq!(memtable.len(), 3);
         assert!(memtable.contains_key(a.key()));
@@ -191,12 +178,14 @@ mod tests {
     }
 
     #[test]
-    fn from_file_delete_nonexistent_key_is_noop() {
+    fn from_file_delete_stores_tombstone() {
         let mut file = tempfile::tempfile().unwrap();
         let delete = Entry::delete("a");
-        file.write_entry_with_header(&delete).unwrap();
+        file.header_write(&delete).unwrap();
         let memtable = MemTable::from_file(&mut file).unwrap();
-        assert!(memtable.is_empty());
+        assert_eq!(memtable.len(), 1);
+        assert!(memtable.contains_key("a"));
+        assert!(matches!(memtable.get("a").unwrap(), Entry::Delete { .. }));
     }
 
     #[test]
@@ -204,21 +193,22 @@ mod tests {
         let mut file = tempfile::tempfile().unwrap();
         let mut memtable = MemTable::from_file(&mut file).unwrap();
         let set = Entry::set("a", "1");
-        memtable.process(&set).unwrap();
+        memtable.process(set).unwrap();
         assert!(memtable.size() > 0);
     }
 
     #[test]
-    fn process_delete_decrements_size() {
+    fn process_delete_replaces_set_with_smaller_tombstone() {
         let mut file = tempfile::tempfile().unwrap();
         let mut memtable = MemTable::from_file(&mut file).unwrap();
         let set = Entry::set("a", "1");
         let delete = Entry::delete("a");
-        memtable.process(&set).unwrap();
+        memtable.process(set).unwrap();
         let size = memtable.size();
-        memtable.process(&delete).unwrap();
+        memtable.process(delete).unwrap();
+        // tombstone is smaller than set (no value), but nonzero
         assert!(size > memtable.size());
-        assert_eq!(memtable.size(), 0);
+        assert!(memtable.size() > 0);
     }
 
     #[test]
@@ -226,19 +216,20 @@ mod tests {
         let mut file = tempfile::tempfile().unwrap();
         let mut memtable = MemTable::from_file(&mut file).unwrap();
         let set = Entry::set("a", "1");
-        memtable.process(&set).unwrap();
+        memtable.process(set.clone()).unwrap();
         let size_after_set = memtable.size();
-        memtable.process(&set).unwrap();
+        memtable.process(set).unwrap();
         assert_eq!(size_after_set, memtable.size());
     }
 
     #[test]
-    fn process_delete_nonexistent_key_is_noop() {
+    fn process_delete_nonexistent_key_stores_tombstone() {
         let mut file = tempfile::tempfile().unwrap();
         let mut memtable = MemTable::from_file(&mut file).unwrap();
         let delete = Entry::delete("a");
-        memtable.process(&delete).unwrap();
-        assert_eq!(memtable.size(), 0);
+        memtable.process(delete).unwrap();
+        assert_eq!(memtable.len(), 1);
+        assert!(memtable.size() > 0);
     }
 
     #[test]
@@ -246,7 +237,7 @@ mod tests {
         let mut file = tempfile::tempfile().unwrap();
         let mut memtable = MemTable::from_file(&mut file).unwrap();
         let set = Entry::set("a", "1");
-        memtable.process(&set).unwrap();
+        memtable.process(set).unwrap();
         memtable.clear();
         assert!(memtable.is_empty());
         assert_eq!(memtable.size(), 0);
@@ -257,7 +248,7 @@ mod tests {
         let mut file = tempfile::tempfile().unwrap();
         let mut memtable = MemTable::from_file(&mut file).unwrap();
         let set = Entry::set("a", "1");
-        memtable.process(&set).unwrap();
+        memtable.process(set.clone()).unwrap();
         let result = memtable.get("a").unwrap();
         assert_eq!(set.key(), result.key());
         assert_eq!(set.value(), result.value());
@@ -275,7 +266,7 @@ mod tests {
         let mut file = tempfile::tempfile().unwrap();
         let mut memtable = MemTable::from_file(&mut file).unwrap();
         let set = Entry::set("a", "1");
-        memtable.process(&set).unwrap();
+        memtable.process(set.clone()).unwrap();
         assert!(memtable.contains_key(set.key()));
     }
 
@@ -292,10 +283,10 @@ mod tests {
         let mut memtable = MemTable::from_file(&mut file).unwrap();
         let set_a = Entry::set("a", "1");
         let set_b = Entry::set("b", "2");
-        memtable.process(&set_a).unwrap();
-        memtable.process(&set_b).unwrap();
+        memtable.process(set_a.clone()).unwrap();
+        memtable.process(set_b).unwrap();
         let len = memtable.len();
-        memtable.process(&set_a).unwrap();
+        memtable.process(set_a).unwrap();
         assert_eq!(len, memtable.len());
     }
 
@@ -306,9 +297,9 @@ mod tests {
         let set1 = Entry::set("a", "1");
         let set2 = Entry::set("b", "2");
         let set3 = Entry::set("c", "3");
-        memtable.process(&set3).unwrap();
-        memtable.process(&set2).unwrap();
-        memtable.process(&set1).unwrap();
+        memtable.process(set3.clone()).unwrap();
+        memtable.process(set2.clone()).unwrap();
+        memtable.process(set1.clone()).unwrap();
         let expected = vec![&set1, &set2, &set3];
         let result: Vec<_> = memtable.values().collect();
         assert_eq!(expected, result);
@@ -329,12 +320,9 @@ mod tests {
     #[test]
     fn flush_writes_bloomfilter_footer_to_sstable() {
         let (_dir, mut log) = temp_log();
-        let set1 = Entry::set("a", "1");
-        let set2 = Entry::set("b", "2");
-        let set3 = Entry::set("c", "3");
-        log.write(&set1).unwrap();
-        log.write(&set2).unwrap();
-        log.write(&set3).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
+        log.write(Entry::set("b", "2")).unwrap();
+        log.write(Entry::set("c", "3")).unwrap();
         log.flush().unwrap();
         let sstable_path = read_dir(log.sstables_path)
             .unwrap()
@@ -362,7 +350,7 @@ mod tests {
     fn bloomfilter_reports_present_for_inserted_key() {
         let (_dir, mut log) = temp_log();
         let set = Entry::set("a", "1");
-        log.write(&set).unwrap();
+        log.write(set.clone()).unwrap();
         log.flush().unwrap();
         let sstable_path = read_dir(log.sstables_path)
             .unwrap()
@@ -398,7 +386,7 @@ mod tests {
     #[test]
     fn bloomfilter_reports_absent_for_missing_key() {
         let (_dir, mut log) = temp_log();
-        log.write(&Entry::set("a", "1")).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
         log.flush().unwrap();
         let sstable_path = read_dir(log.sstables_path)
             .unwrap()

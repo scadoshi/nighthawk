@@ -1,6 +1,12 @@
-use super::{Log, entry::Entry, memtable::MemTable, sstable::SSTable};
+use crate::log::{
+    Log,
+    entry::Entry,
+    sstable::SSTable,
+    wal::memtable::MemTable,
+};
 use std::{
     cmp::Reverse,
+    collections::HashSet,
     fs::{read_dir, remove_file},
 };
 
@@ -34,6 +40,8 @@ impl Log {
         }
         // For writing to
         let mut memtable = MemTable::new();
+        // Track keys for which a winner (Set or Delete) has already been determined
+        let mut seen_keys: HashSet<String> = HashSet::new();
         // Looping begins
         loop {
             // Retain non-exhausted files
@@ -54,14 +62,18 @@ impl Log {
                 min.unwrap()
             };
             // Write to memtable
-            // First which includes min is winner
-            // All which includes min should be advanced
+            // First which includes min is winner; tombstone winners are dropped (not written)
+            // All which include min should be advanced
             for (entry, sstable) in sstables.iter_mut() {
                 let entry_ref = entry.as_ref().unwrap();
                 let is_particpant = entry_ref.key() == min;
-                let winner_found = memtable.contains_key(&min);
+                let winner_found = seen_keys.contains(min.as_str());
                 if is_particpant && !winner_found {
-                    memtable.process(entry_ref)?;
+                    seen_keys.insert(min.clone());
+                    if let Entry::Set { .. } = entry_ref {
+                        memtable.process(entry_ref.clone())?;
+                    }
+                    // Entry::Delete: mark as seen but drop — tombstone served its purpose
                 }
                 if is_particpant {
                     *entry = sstable.read_next_entry()?;
@@ -117,11 +129,10 @@ mod tests {
     #[test]
     fn compact_newest_wins_for_duplicate_key() {
         let (_dir, mut log) = temp_log();
-        let set1 = Entry::set("a", "1");
-        log.write(&set1).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
         log.flush().unwrap();
         let set2 = Entry::set("a", "2");
-        log.write(&set2).unwrap();
+        log.write(set2.clone()).unwrap();
         log.flush().unwrap();
         log.compact().unwrap();
         assert_eq!(log.get("a").unwrap().unwrap().value(), set2.value());
@@ -130,11 +141,9 @@ mod tests {
     #[test]
     fn compact_preserves_all_unique_keys() {
         let (_dir, mut log) = temp_log();
-        let set1 = Entry::set("a", "1");
-        log.write(&set1).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
         log.flush().unwrap();
-        let set2 = Entry::set("b", "2");
-        log.write(&set2).unwrap();
+        log.write(Entry::set("b", "2")).unwrap();
         log.flush().unwrap();
         log.compact().unwrap();
         log.get("a").unwrap().unwrap();
@@ -144,11 +153,9 @@ mod tests {
     #[test]
     fn compact_deletes_original_sstables() {
         let (_dir, mut log) = temp_log();
-        let set1 = Entry::set("a", "1");
-        let set2 = Entry::set("b", "2");
-        log.write(&set1).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
         log.flush().unwrap();
-        log.write(&set2).unwrap();
+        log.write(Entry::set("b", "2")).unwrap();
         log.flush().unwrap();
         let existing_paths: Vec<_> = read_dir(&log.sstables_path)
             .unwrap()
@@ -170,11 +177,11 @@ mod tests {
         let set1 = Entry::set("a", "1");
         let set2 = Entry::set("b", "2");
         let set3 = Entry::set("c", "3");
-        log.write(&set1).unwrap();
+        log.write(set1.clone()).unwrap();
         log.flush().unwrap();
-        log.write(&set2).unwrap();
+        log.write(set2.clone()).unwrap();
         log.flush().unwrap();
-        log.write(&set3).unwrap();
+        log.write(set3.clone()).unwrap();
         log.flush().unwrap();
         log.compact().unwrap();
         assert_eq!(log.get(set1.key()).unwrap().unwrap(), set1);
@@ -185,11 +192,9 @@ mod tests {
     #[test]
     fn compact_reduces_sstable_count() {
         let (_dir, mut log) = temp_log();
-        let set1 = Entry::set("a", "1");
-        let set2 = Entry::set("a", "2");
-        log.write(&set1).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
         log.flush().unwrap();
-        log.write(&set2).unwrap();
+        log.write(Entry::set("a", "2")).unwrap();
         log.flush().unwrap();
         let count = read_dir(&log.sstables_path).unwrap().count();
         log.compact().unwrap();
@@ -197,19 +202,49 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn compact_single_sstable_produces_one_output_and_deletes_original() {
-        // Write one key, flush, compact — should produce exactly one SSTable
-        // and the original file path should no longer exist.
-        todo!()
+        let (_dir, mut log) = temp_log();
+        log.write(Entry::set("a", "1")).unwrap();
+        log.flush().unwrap();
+        let original: Vec<_> = read_dir(&log.sstables_path)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        assert_eq!(original.len(), 1);
+        log.compact().unwrap();
+        assert!(!original[0].exists());
+        assert_eq!(read_dir(&log.sstables_path).unwrap().flatten().count(), 1);
     }
 
     #[test]
-    #[ignore]
     fn compact_three_sstables_with_overlapping_keys() {
-        // Write "a" to SSTable 1, "a" again to SSTable 2, "a" again to SSTable 3 —
-        // compact should produce one SSTable containing only the newest value.
-        // Also verify all unique keys across the three files are preserved.
-        todo!()
+        let (_dir, mut log) = temp_log();
+        log.write(Entry::set("a", "1")).unwrap();
+        log.write(Entry::set("b", "only")).unwrap();
+        log.flush().unwrap();
+        log.write(Entry::set("a", "2")).unwrap();
+        log.write(Entry::set("c", "only")).unwrap();
+        log.flush().unwrap();
+        log.write(Entry::set("a", "3")).unwrap();
+        log.flush().unwrap();
+        log.compact().unwrap();
+        assert_eq!(log.get("a").unwrap().unwrap().value(), Some("3"));
+        assert!(log.get("b").unwrap().is_some());
+        assert!(log.get("c").unwrap().is_some());
+    }
+
+    #[test]
+    fn compact_drops_tombstone_from_output() {
+        // Regression: tombstone resurrection via compact. A Delete entry that wins during
+        // compaction must not appear in the compacted SSTable — it must be silently dropped so
+        // that a subsequent get() returns None rather than resurrecting an older Set entry.
+        let (_dir, mut log) = temp_log();
+        log.write(Entry::set("a", "1")).unwrap();
+        log.flush().unwrap();
+        log.write(Entry::delete("a")).unwrap();
+        log.flush().unwrap();
+        log.compact().unwrap();
+        assert!(log.get("a").unwrap().is_none());
     }
 }
