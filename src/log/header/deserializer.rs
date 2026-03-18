@@ -4,7 +4,7 @@ use wincode::{SchemaRead, config::DefaultConfig};
 
 /// Reasons an entry failed to parse from a byte slice.
 #[derive(Debug, Error)]
-pub enum CorruptionType {
+pub(crate) enum CorruptionType {
     /// Slice is too short to contain a full header.
     #[error("slice too short for header and entry")]
     NotEnoughBytes,
@@ -20,19 +20,19 @@ pub enum CorruptionType {
 }
 
 /// Stateless deserializer that validates and strips the on-disk header from a byte slice.
-pub struct Deserializer;
+pub(super) struct Deserializer;
 
 /// Alias for [`Deserializer`]; prefer this name at call sites for symmetry with [`HeaderSerializer`].
 ///
 /// [`HeaderSerializer`]: crate::log::header::serializer::HeaderSerializer
-pub type HeaderDeserializer = Deserializer;
+pub(super) type HeaderDeserializer = Deserializer;
 
 impl Deserializer {
     /// Parses a header-prefixed byte slice and returns the decoded value and total bytes consumed.
     ///
     /// Validates magic bytes and CRC32 before attempting deserialization. Returns the number of
     /// bytes consumed (`HEADER_LEN + entry_len`) so the caller can advance its read cursor.
-    pub fn deserialize<'de, T>(value: &'de [u8]) -> Result<(T, usize), CorruptionType>
+    pub(super) fn deserialize<'de, T>(value: &'de [u8]) -> Result<(T, usize), CorruptionType>
     where
         T: SchemaRead<'de, DefaultConfig, Dst = T>,
     {

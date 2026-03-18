@@ -1,4 +1,4 @@
-use crate::log::{
+use super::{
     entry::Entry,
     header::{reader::HeaderReader, writer::HeaderWriter},
     sstable::bloom_filter::BloomFilter,
@@ -13,24 +13,24 @@ use std::{
 
 /// In-memory sorted map of the most recent entry per key. Tracks byte size for flush triggering.
 #[derive(Debug)]
-pub struct MemTable {
+pub(crate) struct MemTable {
     inner: BTreeMap<String, Entry>,
     size: u64,
 }
 
 /// Size threshold in mebibytes above which the memtable should be flushed to an SSTable.
-pub const FLUSH_THRESHOLD_MB: u64 = 4;
+pub(super) const FLUSH_THRESHOLD_MB: u64 = 4;
 
 impl MemTable {
     /// Creates a new empty `MemTable` with zero tracked size.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let inner = BTreeMap::<String, Entry>::new();
         let size = 0;
         Self { inner, size }
     }
 
     /// Rebuilds a `MemTable` by replaying all entries from the beginning of `file`.
-    pub fn from_file(file: &mut File) -> anyhow::Result<Self> {
+    pub(crate) fn from_file(file: &mut File) -> anyhow::Result<Self> {
         let mut memtable = Self::new();
         file.seek(SeekFrom::Start(0))?;
         while let Ok(Some(entry)) = file.header_read_next() {
@@ -40,28 +40,27 @@ impl MemTable {
     }
 
     /// Total estimated byte size of all entries, used to trigger SSTable flushes.
-    pub fn size(&self) -> u64 {
+    pub(crate) fn size(&self) -> u64 {
         self.size
     }
 
     /// Applies an entry: inserts for both `Set` and `Delete` (tombstone). Updates byte size tracking.
     /// Returns the previous entry for the key, if any.
-    pub fn process(&mut self, entry: Entry) -> anyhow::Result<Option<Entry>> {
+    pub(crate) fn process(&mut self, entry: Entry) -> anyhow::Result<Option<Entry>> {
         if let Some(previous) = self.inner.get(entry.key()) {
-            self.size -=
-                previous.key().len() as u64 + wincode::serialize(&previous)?.len() as u64;
+            self.size -= previous.key().len() as u64 + wincode::serialize(&previous)?.len() as u64;
         }
         self.size += entry.key().len() as u64 + wincode::serialize(&entry)?.len() as u64;
         Ok(self.inner.insert(entry.key().to_owned(), entry))
     }
 
     /// Returns `true` if the memtable has exceeded the 4 MB flush threshold.
-    pub fn should_flush(&self) -> bool {
+    pub(crate) fn should_flush(&self) -> bool {
         self.size() > FLUSH_THRESHOLD_MB * (1 << 20)
     }
 
     /// Writes all entries in sorted key order to a new timestamped SSTable file in `path`, then clears the memtable.
-    pub fn flush_to(&mut self, mut path: PathBuf) -> anyhow::Result<()> {
+    pub(crate) fn flush_to(&mut self, mut path: PathBuf) -> anyhow::Result<()> {
         // Insurance
         if self.is_empty() {
             return Ok(());
@@ -94,33 +93,33 @@ impl MemTable {
     }
 
     /// Removes all entries and resets byte size to zero.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.size = 0;
         self.inner.clear()
     }
 
     /// Number of unique keys currently in the memtable.
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.inner.len()
     }
 
     /// Returns `true` if the memtable holds no entries and has zero tracked size.
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.size == 0 && self.inner.is_empty()
     }
 
     /// Returns `true` if `key` is present in the memtable.
-    pub fn contains_key(&self, key: impl AsRef<str>) -> bool {
+    pub(crate) fn contains_key(&self, key: impl AsRef<str>) -> bool {
         self.inner.contains_key(key.as_ref())
     }
 
     /// Returns a reference to the entry for `key`, or `None` if absent.
-    pub fn get(&self, key: impl AsRef<str>) -> Option<&Entry> {
+    pub(crate) fn get(&self, key: impl AsRef<str>) -> Option<&Entry> {
         self.inner.get(key.as_ref())
     }
 
     /// Iterates over all entries in ascending key order.
-    pub fn values<'a>(&'a self) -> Values<'a, String, Entry> {
+    pub(crate) fn values<'a>(&'a self) -> Values<'a, String, Entry> {
         self.inner.values()
     }
 }

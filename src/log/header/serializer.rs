@@ -2,17 +2,17 @@ use super::MAGIC;
 use wincode::{SchemaWrite, config::DefaultConfig};
 
 /// Stateless serializer that prepends the on-disk header to a wincode-encoded entry.
-pub struct Serializer;
+pub(super) struct Serializer;
 
 /// Alias for [`Serializer`]; prefer this name at call sites for symmetry with [`HeaderDeserializer`].
 ///
 /// [`HeaderDeserializer`]: crate::log::header::deserializer::HeaderDeserializer
-pub type HeaderSerializer = Serializer;
+pub(super) type HeaderSerializer = Serializer;
 
 impl Serializer {
     /// Encodes `value` and wraps it in the on-disk header format:
     /// `[magic: 2B][crc32: 4B][entry_len: 4B][wincode payload]`.
-    pub fn serialize<T>(value: &T) -> anyhow::Result<Vec<u8>>
+    pub(super) fn serialize<T>(value: &T) -> anyhow::Result<Vec<u8>>
     where
         T: SchemaWrite<DefaultConfig, Src = T>,
     {

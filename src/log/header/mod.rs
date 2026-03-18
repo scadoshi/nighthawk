@@ -1,28 +1,25 @@
-pub mod deserializer;
-pub mod reader;
-pub mod serializer;
-pub mod writer;
+pub(crate) mod deserializer;
+pub(crate) mod reader;
+pub(crate) mod serializer;
+pub(crate) mod writer;
 
-pub use deserializer::CorruptionType;
+pub(crate) use deserializer::CorruptionType;
 
 /// Size of the entry header in bytes: magic (2) + crc32 (4) + entry_len (4).
-pub const HEADER_LEN: u64 = 10;
+pub(super) const HEADER_LEN: u64 = 10;
 /// Magic bytes written at the start of every entry, used to locate entry boundaries.
 /// (String translation: "NH")
-pub const MAGIC: u16 = 0x4E48;
+pub(super) const MAGIC: u16 = 0x4E48;
 
 #[cfg(test)]
 mod tests {
-    use crate::log::{
-        entry::Entry,
-        header::{
-            MAGIC,
-            CorruptionType,
-            deserializer::HeaderDeserializer,
-            reader::HeaderReader,
-            serializer::HeaderSerializer,
-            writer::HeaderWriter,
-        },
+    use crate::log::entry::Entry;
+    use super::{
+        CorruptionType, MAGIC,
+        deserializer::HeaderDeserializer,
+        reader::HeaderReader,
+        serializer::HeaderSerializer,
+        writer::HeaderWriter,
     };
     use std::io::{Seek, SeekFrom, Write};
 

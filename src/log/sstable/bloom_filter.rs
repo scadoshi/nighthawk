@@ -12,7 +12,7 @@ use std::{
 /// The filter is serialized as a footer at the end of each SSTable file:
 /// `[filter_bytes][bit_count: u32 le]`.
 #[derive(Debug)]
-pub struct BloomFilter {
+pub(crate) struct BloomFilter {
     bit_count: usize,
     inner: Vec<u8>,
 }
@@ -44,7 +44,7 @@ impl BloomFilter {
     /// Creates a new empty filter sized for `bit_count` bits (rounded up to the nearest byte).
     ///
     /// For `k = 7` hash functions, `10 bits per key` gives a false-positive rate of ~0.8%.
-    pub fn new(bit_count: usize) -> Self {
+    pub(crate) fn new(bit_count: usize) -> Self {
         let byte_count = bit_count.div_ceil(8);
         Self {
             bit_count,
@@ -53,7 +53,7 @@ impl BloomFilter {
     }
 
     /// Records `key` in the filter by setting all 7 of its bit positions.
-    pub fn insert(&mut self, key: &[u8]) {
+    pub(crate) fn insert(&mut self, key: &[u8]) {
         for pos in positions(key, self.bit_count) {
             self[pos / 8] |= 1 << (pos % 8);
         }
@@ -62,7 +62,7 @@ impl BloomFilter {
     /// Returns `true` if `key` **may** be in the set, `false` if it is **definitely absent**.
     ///
     /// A `true` result can be a false positive; a `false` result is always correct.
-    pub fn may_contain(&self, key: &[u8]) -> bool {
+    pub(crate) fn may_contain(&self, key: &[u8]) -> bool {
         positions(key, self.bit_count).all(|pos| self[pos / 8] & 1 << (pos % 8) != 0)
     }
 }
@@ -72,7 +72,7 @@ impl BloomFilter {
 /// The footer layout (written from the end of the file backward) is:
 /// - 4 bytes: `bit_count` as `u32` little-endian
 /// - `bit_count.div_ceil(8)` bytes: the filter bit array
-pub trait BloomFilterReader: Read + Seek {
+pub(super) trait BloomFilterReader: Read + Seek {
     /// Reads the bloom filter footer from the current file.
     ///
     /// Returns `None` if the file is too small to hold a valid footer.

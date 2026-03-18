@@ -1,12 +1,10 @@
 use std::io::{Seek, SeekFrom, Write};
-
 use wincode::{SchemaWrite, config::DefaultConfig};
-
-use crate::log::header::serializer::HeaderSerializer;
+use super::serializer::HeaderSerializer;
 
 /// Write entries with the on-disk header format:
 /// `[magic: 2B][crc32: 4B][entry_len: 4B][wincode-serialized Entry]`
-pub trait HeaderWriter<T>
+pub(crate) trait HeaderWriter<T>
 where
     T: SchemaWrite<DefaultConfig, Src = T>,
 {

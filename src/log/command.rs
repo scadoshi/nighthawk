@@ -1,12 +1,10 @@
-use crate::{
-    log::{Log, entry::Entry},
-    tui,
-};
+use crate::tui;
+use super::{Log, entry::Entry};
 use thiserror::Error;
 
 /// Errors from parsing user input into a command.
 #[derive(Debug, Error)]
-pub enum CommandError {
+pub(crate) enum CommandError {
     /// Unrecognized command name.
     #[error("unrecognized command")]
     UnrecognizedCommand,
@@ -20,7 +18,7 @@ pub enum CommandError {
 
 /// A parsed user command. Not all variants produce log entries (e.g. Quit, Help).
 #[derive(Debug)]
-pub enum Command {
+pub(crate) enum Command {
     /// Store a key-value pair.
     Set { key: String, value: String },
     /// Retrieve the value for a key.
@@ -81,7 +79,7 @@ impl TryFrom<&str> for Command {
 
 impl Command {
     /// Loops on stdin until a valid command is parsed.
-    pub fn unfallible_get() -> Self {
+    pub(crate) fn unfallible_get() -> Self {
         loop {
             let mut input_str = String::new();
             std::io::stdin().read_line(&mut input_str).ok();
@@ -97,7 +95,7 @@ impl Command {
     }
 
     /// Constructs a `Set` command.
-    pub fn set(key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub(crate) fn set(key: impl Into<String>, value: impl Into<String>) -> Self {
         Self::Set {
             key: key.into(),
             value: value.into(),
@@ -105,17 +103,17 @@ impl Command {
     }
 
     /// Constructs a `Get` command.
-    pub fn get(key: impl Into<String>) -> Self {
+    pub(crate) fn get(key: impl Into<String>) -> Self {
         Self::Get { key: key.into() }
     }
 
     /// Constructs a `Delete` command.
-    pub fn delete(key: impl Into<String>) -> Self {
+    pub(crate) fn delete(key: impl Into<String>) -> Self {
         Self::Delete { key: key.into() }
     }
 
     /// Returns the key for commands that carry one (`Set`, `Get`, `Delete`), `None` otherwise.
-    pub fn key(&self) -> Option<&str> {
+    pub(crate) fn key(&self) -> Option<&str> {
         match self {
             Self::Set { key, .. } | Self::Get { key } | Self::Delete { key } => Some(key.as_str()),
             Self::Quit | Self::Help => None,
@@ -123,7 +121,7 @@ impl Command {
     }
 
     /// Returns the value for `Set` commands, `None` for all others.
-    pub fn value(&self) -> Option<&str> {
+    pub(crate) fn value(&self) -> Option<&str> {
         match self {
             Self::Set { value, .. } => Some(value.as_str()),
             Self::Get { .. } | Self::Delete { .. } | Self::Quit | Self::Help => None,
@@ -133,7 +131,7 @@ impl Command {
 
 /// Runs a command against a log store. Separated from `Log` so command
 /// handling logic lives alongside the `Command` type.
-pub trait Execute {
+pub(crate) trait Execute {
     /// Dispatches a command: reads/writes the log and prints results.
     fn execute(&mut self, command: Command) -> anyhow::Result<()>;
 }

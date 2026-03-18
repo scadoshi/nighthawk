@@ -1,12 +1,10 @@
 use std::io::{Read, Seek, SeekFrom};
-
 use wincode::{SchemaRead, config::DefaultConfig};
-
-use crate::log::header::deserializer::HeaderDeserializer;
+use super::deserializer::HeaderDeserializer;
 
 /// Read entries with the on-disk header format:
 /// `[magic: 2B][crc32: 4B][entry_len: 4B][wincode-serialized Entry]`
-pub trait HeaderReader<T>
+pub(crate) trait HeaderReader<T>
 where
     T: for<'de> SchemaRead<'de, DefaultConfig, Dst = T>,
 {
