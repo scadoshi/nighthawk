@@ -40,12 +40,6 @@ impl Entry {
     }
 }
 
-impl From<&Entry> for Entry {
-    fn from(value: &Entry) -> Self {
-        value.to_owned()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

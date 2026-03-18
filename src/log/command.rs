@@ -98,7 +98,10 @@ impl Command {
 
     /// Constructs a `Set` command.
     pub fn set(key: impl Into<String>, value: impl Into<String>) -> Self {
-        Self::Set { key: key.into(), value: value.into() }
+        Self::Set {
+            key: key.into(),
+            value: value.into(),
+        }
     }
 
     /// Constructs a `Get` command.
@@ -139,22 +142,20 @@ impl Execute for Log {
     fn execute(&mut self, command: Command) -> anyhow::Result<()> {
         match command {
             Command::Set { key, value } => {
-                let set = Entry::set(key, value);
-                self.write(&set)?;
-                println!("{} => {}", set.key(), set.value().unwrap());
+                println!("{} => {}", key, value);
+                self.write(Entry::set(key, value))?;
                 self.maybe_flush()?;
             }
             Command::Get { key } => match self.get(&key)? {
                 Some(Entry::Set { value, .. }) => println!("{} => {}", key, value),
-                Some(Entry::Delete { .. }) => println!("Entry at {} corrupted.", key),
                 None => println!("{} not found", key),
+                Some(Entry::Delete { .. }) => unreachable!("Log::get never returns Delete"),
             },
             Command::Delete { key } => {
                 // Only write tombstone if key exists, avoids unnecessary log growth.
                 if self.contains(&key)? {
-                    let delete = Entry::delete(key);
-                    self.write(&delete)?;
-                    println!("{} deleted", delete.key());
+                    println!("{} deleted", key);
+                    self.write(Entry::delete(key))?;
                 } else {
                     println!("{} not found", key);
                 }
@@ -365,13 +366,13 @@ mod tests {
     }
 
     #[test]
-    fn execute_delete_existing_key_removes_from_memtable() {
+    fn execute_delete_existing_key_tombstones_key() {
         let (_dir, mut log) = temp_log();
         let set = Command::set("a", "1");
         let key = set.key().unwrap().to_string();
         log.execute(set).unwrap();
         log.execute(Command::delete(key)).unwrap();
-        assert!(log.memtable.is_empty());
+        assert!(log.get("a").unwrap().is_none());
     }
 
     #[test]
@@ -395,7 +396,9 @@ mod tests {
             log.execute(delete).unwrap();
         }
         let log = Log::new(dir.path(), &memtable_path, &sstables_path, false).unwrap();
-        assert!(log.memtable.is_empty());
+        // tombstone is replayed from WAL into memtable
+        assert!(!log.memtable.is_empty());
+        assert!(log.get("a").unwrap().is_none());
     }
 
     #[test]

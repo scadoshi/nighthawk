@@ -1,21 +1,21 @@
 pub mod command;
-pub mod compact;
 pub mod entry;
 pub mod header;
-pub mod memtable;
 pub mod sstable;
+pub mod wal;
 
-use entry::Entry;
-use header::HeaderWriter;
-use memtable::MemTable;
+use crate::log::{
+    entry::Entry,
+    sstable::SSTable,
+    wal::memtable::MemTable,
+};
+use header::writer::HeaderWriter;
 use std::{
     cmp::Reverse,
     fs::{File, OpenOptions, create_dir_all, read_dir},
     io::{Seek, SeekFrom},
     path::PathBuf,
 };
-
-use crate::log::sstable::SSTable;
 
 /// Root directory for all persisted data.
 pub const DATA_PATH: &str = "data";
@@ -29,7 +29,6 @@ const COMPACT_EVERY_N_FLUSHES: u64 = 10;
 /// Append-only log store. Owns the data file and in-memory key-to-entry memtable.
 #[derive(Debug)]
 pub struct Log {
-    wal_path: PathBuf,
     wal_file: File,
     memtable: MemTable,
     sstables_path: PathBuf,
@@ -65,7 +64,6 @@ impl Log {
             .len() as u64;
         // Return
         Ok(Self {
-            wal_path,
             wal_file,
             memtable,
             sstables_path,
@@ -74,45 +72,40 @@ impl Log {
     }
 
     /// Appends an entry with header to the WAL and syncs to disk, then applies it to the memtable.
-    pub fn write(&mut self, entry: &Entry) -> anyhow::Result<()> {
-        self.wal_file.write_entry_with_header(entry)?;
+    pub fn write(&mut self, entry: Entry) -> anyhow::Result<()> {
+        self.wal_file.header_write(&entry)?;
         self.wal_file.sync_all()?;
         self.memtable.process(entry)?;
         Ok(())
     }
 
     /// Looks up a key: checks the memtable first, then scans SSTables newest-to-oldest.
-    /// Returns `None` if the key is absent from both layers.
+    /// Returns `None` if the key is absent or deleted in either layer.
     pub fn get(&self, key: impl AsRef<str>) -> anyhow::Result<Option<Entry>> {
         // Try memtable first
         if let Some(entry) = self.memtable.get(key.as_ref()) {
-            return Ok(Some(entry.clone()));
+            return match entry {
+                Entry::Set { .. } => Ok(Some(entry.clone())),
+                Entry::Delete { .. } => Ok(None),
+            };
         }
         // Then if not found sift through SSTables
         // Only does linear search for now
         let mut dir_entries: Vec<_> =
             read_dir(&self.sstables_path)?.collect::<Result<Vec<_>, _>>()?;
         dir_entries.sort_by_key(|e| Reverse(e.file_name()));
-        'entry_loop: for dir_entry in dir_entries {
+        for dir_entry in dir_entries {
             let Some(mut sstable) = SSTable::from_path(dir_entry.path())? else {
                 continue;
             };
-            // Generate hashes to check in bloom filter
-            let hash1 = xxh3::hash64_with_seed(key.as_ref().as_bytes(), 0);
-            let hash2 = xxh3::hash64_with_seed(key.as_ref().as_bytes(), 1);
-            for i in 0..7 {
-                let pos = (hash1.wrapping_add((i as u64).wrapping_mul(hash2))
-                    % sstable.bloom_filter().bit_count() as u64) as usize;
-                if sstable.bloom_filter()[pos / 8] & 1 << (pos % 8) == 0 {
-                    continue 'entry_loop;
-                }
-            }
-
-            // SSTable is may contain key therefore you may read it
-            while let Some(entry) = sstable.read_next_entry()? {
-                assert!(matches!(entry, Entry::Set { .. }));
-                if entry.key() == key.as_ref() {
-                    return Ok(Some(entry));
+            if sstable.bloom_filter().may_contain(key.as_ref().as_bytes()) {
+                while let Some(entry) = sstable.read_next_entry()? {
+                    if entry.key() == key.as_ref() {
+                        return match entry {
+                            Entry::Set { .. } => Ok(Some(entry)),
+                            Entry::Delete { .. } => Ok(None),
+                        };
+                    }
                 }
             }
         }
@@ -176,8 +169,7 @@ mod tests {
         let sstables_path = dir.path().join("sstables");
         {
             let mut log = Log::new(dir.path(), &memtable_path, &sstables_path, true).unwrap();
-            let set = Entry::set("a", "1");
-            log.write(&set).unwrap();
+            log.write(Entry::set("a", "1")).unwrap();
         }
         let log = Log::new(dir.path(), &memtable_path, &sstables_path, false).unwrap();
         assert_eq!(log.memtable.len(), 1);
@@ -188,7 +180,7 @@ mod tests {
     fn get_returns_entry_from_memtable() {
         let (_dir, mut log) = temp_log();
         let set = Entry::set("a", "1");
-        log.write(&set).unwrap();
+        log.write(set.clone()).unwrap();
         let result = log.get("a").unwrap().unwrap();
         assert_eq!(result.key(), set.key());
         assert_eq!(result.value(), set.value());
@@ -204,7 +196,7 @@ mod tests {
     fn get_finds_entry_in_sstable_after_flush() {
         let (_dir, mut log) = temp_log();
         let set = Entry::set("a", "1");
-        log.write(&set).unwrap();
+        log.write(set.clone()).unwrap();
         log.flush().unwrap();
         let result = log.get("a").unwrap().unwrap();
         assert_eq!(set.key(), result.key());
@@ -214,10 +206,8 @@ mod tests {
     #[test]
     fn get_returns_newest_when_key_in_multiple_sstables() {
         let (_dir, mut log) = temp_log();
-        let set1 = Entry::set("a", "1");
-        log.write(&set1).unwrap();
-        let set2 = Entry::set("a", "2");
-        log.write(&set2).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
+        log.write(Entry::set("a", "2")).unwrap();
         log.flush().unwrap();
         assert_eq!(log.get("a").unwrap().unwrap().value(), Some("2"));
     }
@@ -225,8 +215,7 @@ mod tests {
     #[test]
     fn flush_creates_sstable_file_on_disk() {
         let (_dir, mut log) = temp_log();
-        let set = Entry::set("a", "1");
-        log.write(&set).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
         log.flush().unwrap();
         let sst_exists = read_dir(log.sstables_path)
             .unwrap()
@@ -238,8 +227,7 @@ mod tests {
     #[test]
     fn flush_clears_memtable() {
         let (_dir, mut log) = temp_log();
-        let set = Entry::set("a", "1");
-        log.write(&set).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
         log.flush().unwrap();
         assert!(log.memtable.is_empty());
     }
@@ -247,8 +235,7 @@ mod tests {
     #[test]
     fn flush_truncates_wal() {
         let (_dir, mut log) = temp_log();
-        let set = Entry::set("a", "1");
-        log.write(&set).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
         log.flush().unwrap();
         assert!(log.wal_file.metadata().unwrap().len() == 0);
     }
@@ -256,8 +243,7 @@ mod tests {
     #[test]
     fn maybe_flush_does_not_flush_when_below_threshold() {
         let (_dir, mut log) = temp_log();
-        let set = Entry::set("a", "1");
-        log.write(&set).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
         log.maybe_flush().unwrap();
         assert!(!log.memtable.is_empty());
         assert!(log.wal_file.metadata().unwrap().len() != 0);
@@ -272,15 +258,54 @@ mod tests {
     #[test]
     fn get_returns_none_for_absent_key_across_multiple_sstables() {
         let (_dir, mut log) = temp_log();
-        let set1 = Entry::set("a", "1");
-        let set2 = Entry::set("b", "2");
-        let set3 = Entry::set("c", "3");
-        log.write(&set1).unwrap();
+        log.write(Entry::set("a", "1")).unwrap();
         log.flush().unwrap();
-        log.write(&set2).unwrap();
+        log.write(Entry::set("b", "2")).unwrap();
         log.flush().unwrap();
-        log.write(&set3).unwrap();
+        log.write(Entry::set("c", "3")).unwrap();
         log.flush().unwrap();
         assert!(log.get("d").unwrap().is_none());
+    }
+
+    #[test]
+    fn get_returns_none_for_tombstone_in_memtable() {
+        let (_dir, mut log) = temp_log();
+        log.write(Entry::set("a", "1")).unwrap();
+        log.write(Entry::delete("a")).unwrap();
+        assert!(log.get("a").unwrap().is_none());
+    }
+
+    #[test]
+    fn get_returns_none_after_flush_and_delete() {
+        // Regression: tombstone resurrection bug. Before the fix, deleting a key that had already
+        // been flushed to an SSTable would only clear the memtable; the SSTable still contained
+        // the Set entry, so a subsequent get() would find and return it.
+        let (_dir, mut log) = temp_log();
+        log.write(Entry::set("a", "1")).unwrap();
+        log.flush().unwrap();
+        log.write(Entry::delete("a")).unwrap();
+        assert!(log.get("a").unwrap().is_none());
+    }
+
+    #[test]
+    fn get_skips_sstable_when_bloom_filter_says_absent() {
+        // If the bloom filter definitively says a key is absent, the SSTable is not scanned.
+        // The result must still be None.
+        let (_dir, mut log) = temp_log();
+        log.write(Entry::set("a", "1")).unwrap();
+        log.flush().unwrap();
+        assert!(log.get("z").unwrap().is_none());
+    }
+
+    #[test]
+    fn get_finds_key_when_bloom_filter_says_maybe_present() {
+        // When the bloom filter reports a key may be present, the SSTable is scanned and the
+        // entry is returned.
+        let (_dir, mut log) = temp_log();
+        let set = Entry::set("a", "1");
+        log.write(set.clone()).unwrap();
+        log.flush().unwrap();
+        let result = log.get("a").unwrap().unwrap();
+        assert_eq!(result, set);
     }
 }
