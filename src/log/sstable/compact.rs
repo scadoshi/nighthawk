@@ -1,9 +1,4 @@
-use crate::log::{
-    Log,
-    entry::Entry,
-    sstable::SSTable,
-    wal::memtable::MemTable,
-};
+use crate::log::{Log, entry::Entry, memtable::MemTable, sstable::SSTable};
 use std::{
     cmp::Reverse,
     collections::HashSet,

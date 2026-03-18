@@ -1,14 +1,10 @@
 pub mod command;
 pub mod entry;
 pub mod header;
+pub mod memtable;
 pub mod sstable;
-pub mod wal;
 
-use crate::log::{
-    entry::Entry,
-    sstable::SSTable,
-    wal::memtable::MemTable,
-};
+use crate::log::{entry::Entry, memtable::MemTable, sstable::SSTable};
 use header::writer::HeaderWriter;
 use std::{
     cmp::Reverse,
