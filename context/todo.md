@@ -94,7 +94,14 @@ Work through these in order. Each builds on the last.
   DEL key\n        →  OK\n     or  NOT_FOUND\n
   ```
   Easier to test with `nc` / `telnet`, but less consistent with existing binary format.
-- **Decision to make before coding:** binary or text? Write it down in this file once decided.
+- **Decision: text protocol chosen.** Newline-delimited, human-readable. Easy to test with `nc`.
+  Commands map directly onto the existing `Command` enum (`TryFrom<&str>` reused as-is).
+  ```
+  SET key value\n  →  OK\n
+  GET key\n        →  value\n  or  NIL\n
+  DEL key\n        →  OK\n     or  NOT_FOUND\n
+  ERR message\n   (server-side errors)
+  ```
 
 #### 6. Connection handling pattern (sync, one thread per connection)
 **Goal:** understand the basic sync server loop before adding concurrency in Phase 6.
@@ -120,14 +127,18 @@ Work through these in order. Each builds on the last.
 
 ---
 
-### Phase 5 build plan (fill in after completing the learning regimen)
-- [ ] Decide: binary vs text wire protocol — document the format here before coding
-- [ ] `src/server.rs` — `TcpListener` loop, `handle_connection(stream, log)`
-- [ ] Request parsing — read framed bytes off `BufReader<TcpStream>`, parse into `Command`
-- [ ] Response serialisation — write framed response bytes to `BufWriter<TcpStream>`
-- [ ] Wire up `Log::get`, `Log::write`, `Log::delete` inside `handle_connection`
+### Phase 5 build plan
+
+**Protocol decision: newline-delimited text.** No client binary planned — protocol is the contract,
+clients are free to be anything (`nc`, custom, etc.). Server is a second binary alongside the
+existing REPL; `Command::TryFrom<&str>` parsing is reused as-is.
+
+- [x] Decide: text wire protocol (newline-delimited)
+- [ ] `src/server.rs` — `TcpListener` loop, `handle_connection(BufReader<TcpStream>, log)`
+- [ ] Request parsing — `BufReader::read_line()` → `Command::try_from(&str)` (already exists)
+- [ ] Response serialisation — write response line to `BufWriter<TcpStream>`, flush
+- [ ] Wire up `Log::get`, `Log::write` (set), `Log::delete` inside `handle_connection`
 - [ ] Integration tests — spawn server in background thread, connect with `TcpStream`, assert responses
-- [ ] Client binary (`src/bin/client.rs`) — connects, sends commands, prints responses
 
 ## Phase 6 — Concurrency
 
