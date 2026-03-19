@@ -3,6 +3,18 @@ name = "nighthawk"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "repl"
+path = "src/bin/repl.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[lib]
+name = "nighthawk"
+path = "src/lib/lib.rs"
+
 [dependencies]
 anyhow = "1.0.102"
 crc32fast = "1.5.0"
@@ -12,3 +24,4 @@ xxh3 = "0.1.1"
 
 [dev-dependencies]
 tempfile = "3"
+
