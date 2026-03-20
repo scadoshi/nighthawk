@@ -2,7 +2,10 @@ use super::log::{
     Log,
     command::{Command, Execute},
 };
-use std::io::{BufRead, Write};
+use std::{
+    io::{BufRead, Write},
+    sync::{Arc, Mutex},
+};
 
 pub struct Runner<R, W>
 where
@@ -22,7 +25,7 @@ where
         Self { reader, writer }
     }
 
-    pub fn run(&mut self, log: &mut Log) -> anyhow::Result<()> {
+    pub fn run(&mut self, log: Arc<Mutex<Log>>) -> anyhow::Result<()> {
         let mut line = String::new();
         loop {
             line.clear();
@@ -31,7 +34,10 @@ where
             }
             match Command::try_from(line.trim()) {
                 Ok(Command::Quit) => break,
-                Ok(cmd) => log.execute(cmd, &mut self.writer)?,
+                Ok(cmd) => {
+                    let mut guard = log.lock().unwrap();
+                    guard.execute(cmd, &mut self.writer)?
+                }
                 Err(e) => writeln!(self.writer, "Error: {}", e)?,
             }
             self.writer.flush()?;

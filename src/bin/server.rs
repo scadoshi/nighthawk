@@ -5,6 +5,7 @@ use nighthawk::{
 use std::{
     io::{BufReader, BufWriter},
     net::TcpListener,
+    sync::{Arc, Mutex},
 };
 
 fn server() -> anyhow::Result<()> {
@@ -12,15 +13,29 @@ fn server() -> anyhow::Result<()> {
     let address = std::env::var("ADDRESS")?;
     let port = std::env::var("PORT")?;
     let bind_address = format!("{}:{}", address, port);
-    let mut log = Log::new(DATA_PATH, WAL_PATH, SSTABLES_PATH, false)?;
+    let log = Arc::new(Mutex::new(Log::new(
+        DATA_PATH,
+        WAL_PATH,
+        SSTABLES_PATH,
+        false,
+    )?));
     let listener = TcpListener::bind(bind_address)?;
     println!("Listening on {}", listener.local_addr()?);
     for stream in listener.incoming() {
         let stream = stream?;
-        let reader = BufReader::new(stream.try_clone()?);
-        let writer = BufWriter::new(stream);
-        let mut runner = Runner::new(reader, writer);
-        runner.run(&mut log)?;
+        let log = Arc::clone(&log);
+        std::thread::spawn(move || {
+            let Ok(stream_clone) = stream.try_clone() else {
+                eprintln!("Failed to clone stream");
+                return;
+            };
+            let reader = BufReader::new(stream_clone);
+            let writer = BufWriter::new(stream);
+            let mut runner = Runner::new(reader, writer);
+            if let Err(e) = runner.run(log) {
+                eprintln!("Connection error: {}", e)
+            }
+        });
     }
     Ok(())
 }

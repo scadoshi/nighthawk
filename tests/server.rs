@@ -15,17 +15,20 @@ fn start_server() -> std::net::SocketAddr {
     let addr = listener.local_addr().unwrap();
     let wal_path = dir.path().join("wal");
     let sstables_path = dir.path().join("sstables");
-    let mut log = Log::new(dir.path(), wal_path, sstables_path, true).unwrap();
+    let log = Arc::new(Mutex::new(
+        Log::new(dir.path(), wal_path, sstables_path, true).unwrap(),
+    ));
 
     thread::spawn(move || {
         // Keep dir alive for the lifetime of the thread
         let _dir = dir;
         for stream in listener.incoming() {
+            let log = Arc::clone(&log);
             let stream = stream.unwrap();
             let reader = BufReader::new(stream.try_clone().unwrap());
             let writer = BufWriter::new(stream);
             let mut runner = Runner::new(reader, writer);
-            runner.run(&mut log).unwrap();
+            runner.run(log).unwrap();
         }
     });
 
