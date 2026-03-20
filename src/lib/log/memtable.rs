@@ -109,6 +109,7 @@ impl MemTable {
     }
 
     /// Returns `true` if `key` is present in the memtable.
+    #[cfg(test)]
     pub(crate) fn contains_key(&self, key: impl AsRef<str>) -> bool {
         self.inner.contains_key(key.as_ref())
     }

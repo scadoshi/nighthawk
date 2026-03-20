@@ -3,7 +3,6 @@ pub(crate) mod reader;
 pub(crate) mod serializer;
 pub(crate) mod writer;
 
-pub(crate) use deserializer::CorruptionType;
 
 /// Size of the entry header in bytes: magic (2) + crc32 (4) + entry_len (4).
 pub(super) const HEADER_LEN: u64 = 10;
@@ -15,7 +14,8 @@ pub(super) const MAGIC: u16 = 0x4E48;
 mod tests {
     use crate::log::entry::Entry;
     use super::{
-        CorruptionType, MAGIC,
+        MAGIC,
+        deserializer::CorruptionType,
         deserializer::HeaderDeserializer,
         reader::HeaderReader,
         serializer::HeaderSerializer,

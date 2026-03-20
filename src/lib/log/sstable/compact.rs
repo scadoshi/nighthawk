@@ -13,7 +13,7 @@ impl Log {
     /// Intermediate output is flushed to new SSTable files when the 4 MB threshold
     /// is exceeded, with a final flush for any remaining entries.
     /// All original SSTables are deleted once the compactd output is written.
-    pub(crate) fn compact(&mut self) -> anyhow::Result<()> {
+    pub fn compact(&mut self) -> anyhow::Result<()> {
         // Get entries and sort desc by path--will correlate to most recent ordering first
         let mut entries: Vec<_> = read_dir(&self.sstables_path)?.collect::<Result<_, _>>()?;
         entries.sort_by_key(|e| Reverse(e.file_name()));

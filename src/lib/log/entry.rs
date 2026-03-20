@@ -2,7 +2,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 /// A key-value operation serialized to the log file.
 #[derive(Debug, SchemaRead, SchemaWrite, Clone, PartialEq)]
-pub(crate) enum Entry {
+pub enum Entry {
     /// Stores a value for the given key.
     Set { key: String, value: String },
     /// Tombstone — marks a key as deleted.
@@ -11,7 +11,7 @@ pub(crate) enum Entry {
 
 impl Entry {
     /// Returns the key for any entry variant.
-    pub(crate) fn key(&self) -> &str {
+    pub fn key(&self) -> &str {
         match self {
             Self::Set { key, .. } => key.as_str(),
             Self::Delete { key } => key.as_str(),
@@ -19,7 +19,7 @@ impl Entry {
     }
 
     /// Returns the value if this is a `Set` entry, `None` for `Delete`.
-    pub(crate) fn value(&self) -> Option<&str> {
+    pub fn value(&self) -> Option<&str> {
         match self {
             Self::Set { value, .. } => Some(value.as_str()),
             Self::Delete { .. } => None,
@@ -27,7 +27,7 @@ impl Entry {
     }
 
     /// Constructs a `Set` entry.
-    pub(crate) fn set(key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn set(key: impl Into<String>, value: impl Into<String>) -> Self {
         Self::Set {
             key: key.into(),
             value: value.into(),
@@ -35,7 +35,7 @@ impl Entry {
     }
 
     /// Constructs a `Delete` tombstone entry.
-    pub(crate) fn delete(key: impl Into<String>) -> Self {
+    pub fn delete(key: impl Into<String>) -> Self {
         Self::Delete { key: key.into() }
     }
 }

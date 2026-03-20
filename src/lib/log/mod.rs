@@ -1,10 +1,13 @@
-pub(crate) mod command;
+pub mod command;
 pub(crate) mod entry;
 pub(crate) mod header;
 pub(crate) mod memtable;
 pub(crate) mod sstable;
 
-use self::{entry::Entry, memtable::MemTable, sstable::SSTable};
+pub use command::{Command, CommandError};
+pub use entry::Entry;
+
+use self::{memtable::MemTable, sstable::SSTable};
 use header::writer::HeaderWriter;
 use std::{
     cmp::Reverse,
@@ -14,17 +17,17 @@ use std::{
 };
 
 /// Root directory for all persisted data.
-pub(crate) const DATA_PATH: &str = "data";
+pub const DATA_PATH: &str = "data";
 /// Path to the write-ahead log (WAL) file.
-pub(crate) const WAL_PATH: &str = "data/wal";
+pub const WAL_PATH: &str = "data/wal";
 /// Directory containing flushed SSTable files.
-pub(crate) const SSTABLES_PATH: &str = "data/sstables";
+pub const SSTABLES_PATH: &str = "data/sstables";
 /// Multiple which flush_count is checked against in order to determine compaction timing
 const COMPACT_EVERY_N_FLUSHES: u64 = 10;
 
 /// Append-only log store. Owns the data file and in-memory key-to-entry memtable.
 #[derive(Debug)]
-pub(crate) struct Log {
+pub struct Log {
     wal_file: File,
     memtable: MemTable,
     sstables_path: PathBuf,
@@ -34,7 +37,7 @@ pub(crate) struct Log {
 impl Log {
     /// Opens or creates a log file and rebuilds the memtable from its contents. Takes truncate flag
     /// informing whether to overwrite or append existing file content.
-    pub(crate) fn new(
+    pub fn new(
         data_path: impl Into<PathBuf>,
         wal_path: impl Into<PathBuf>,
         sstables_path: impl Into<PathBuf>,
@@ -68,7 +71,7 @@ impl Log {
     }
 
     /// Appends an entry with header to the WAL and syncs to disk, then applies it to the memtable.
-    pub(crate) fn write(&mut self, entry: Entry) -> anyhow::Result<()> {
+    pub fn write(&mut self, entry: Entry) -> anyhow::Result<()> {
         self.wal_file.header_write(&entry)?;
         self.wal_file.sync_all()?;
         self.memtable.process(entry)?;
@@ -77,7 +80,7 @@ impl Log {
 
     /// Looks up a key: checks the memtable first, then scans SSTables newest-to-oldest.
     /// Returns `None` if the key is absent or deleted in either layer.
-    pub(crate) fn get(&self, key: impl AsRef<str>) -> anyhow::Result<Option<Entry>> {
+    pub fn get(&self, key: impl AsRef<str>) -> anyhow::Result<Option<Entry>> {
         // Try memtable first
         if let Some(entry) = self.memtable.get(key.as_ref()) {
             return match entry {
@@ -109,13 +112,13 @@ impl Log {
     }
 
     /// Returns `true` if `key` exists in the memtable or any SSTable.
-    pub(crate) fn contains(&self, key: impl AsRef<str>) -> anyhow::Result<bool> {
+    pub fn contains(&self, key: impl AsRef<str>) -> anyhow::Result<bool> {
         self.get(key).map(|o| o.is_some())
     }
 
     /// Writes all memtable entries sorted by key to a new timestamped SSTable file,
     /// then truncates the WAL and clears the memtable.
-    pub(crate) fn flush(&mut self) -> anyhow::Result<()> {
+    pub fn flush(&mut self) -> anyhow::Result<()> {
         self.memtable.flush_to(self.sstables_path.clone())?;
         self.wal_file.set_len(0)?;
         self.wal_file.seek(SeekFrom::Start(0))?;
@@ -127,7 +130,7 @@ impl Log {
     }
 
     /// Flushes to an SSTable if the memtable has exceeded the 4 MB size threshold.
-    pub(crate) fn maybe_flush(&mut self) -> anyhow::Result<()> {
+    pub fn maybe_flush(&mut self) -> anyhow::Result<()> {
         if self.memtable.should_flush() {
             self.flush()
         } else {
