@@ -134,11 +134,19 @@ clients are free to be anything (`nc`, custom, etc.). Server is a second binary 
 existing REPL; `Command::TryFrom<&str>` parsing is reused as-is.
 
 - [x] Decide: text wire protocol (newline-delimited)
-- [ ] `src/server.rs` — `TcpListener` loop, `handle_connection(BufReader<TcpStream>, log)`
-- [ ] Request parsing — `BufReader::read_line()` → `Command::try_from(&str)` (already exists)
-- [ ] Response serialisation — write response line to `BufWriter<TcpStream>`, flush
-- [ ] Wire up `Log::get`, `Log::write` (set), `Log::delete` inside `handle_connection`
-- [ ] Integration tests — spawn server in background thread, connect with `TcpStream`, assert responses
+- [x] `src/bin/server.rs` — `TcpListener` loop, `Runner` per connection
+- [x] Request parsing — `BufReader::read_line()` → `Command::try_from(&str)` (reused as-is)
+- [x] Response serialisation — `writeln!` to `BufWriter<TcpStream>`, flush after each response
+- [x] Wire up `Log` via `Execute` trait inside `Runner::run()`
+- [x] `Runner<R, W>` — generic over `BufRead + Write`, shared by REPL and server
+- [x] `src/bin/repl.rs` — uses `Runner` with `BufReader<Stdin> + Stdout`
+- [ ] Integration tests — stubs written in `tests/server.rs`, assertions to be filled in
+
+## Phase 5.5 — Configuration
+
+- [ ] `.env` file loading — read `BIND_ADDRESS` and `BIND_PORT` at server startup (use `dotenvy` crate)
+- [ ] Fall back to defaults (`127.0.0.1:3000`) if `.env` absent or values missing
+- [ ] Pass resolved bind address into `TcpListener::bind()` in `server.rs`
 
 ## Phase 6 — Concurrency
 
@@ -159,14 +167,18 @@ Entry header format:
 ```
 
 Key files:
-- `src/log/entry.rs` — `Entry` enum (Set/Delete) — single type used by all layers
-- `src/log/header/` — `HeaderWriter`, `HeaderReader`, `HeaderSerializer`, `HeaderDeserializer`, `CorruptionType`
-- `src/log/mod.rs` — `Log` struct: `write`, `get`, `contains`, `flush`, `maybe_flush`
-- `src/log/wal/memtable.rs` — `MemTable` wrapping `BTreeMap<String, Entry>`, `process()`, `flush_to()`, `should_flush()`
-- `src/log/sstable/mod.rs` — `SSTable` struct: bloom filter, boundary position, entry iteration
-- `src/log/sstable/bloom_filter.rs` — `BloomFilter`, `BloomFilterReader`
-- `src/log/sstable/compact.rs` — `Log::compact()` k-way merge; tombstone winners dropped
-- `src/log/command.rs` — `Execute` trait on `Log`, REPL command handling
+- `src/lib/log/entry.rs` — `Entry` enum (Set/Delete) — single type used by all layers
+- `src/lib/log/header/` — `HeaderWriter`, `HeaderReader`, `HeaderSerializer`, `HeaderDeserializer`, `CorruptionType`
+- `src/lib/log/mod.rs` — `Log` struct: `write`, `get`, `contains`, `flush`, `maybe_flush`
+- `src/lib/log/memtable.rs` — `MemTable` wrapping `BTreeMap<String, Entry>`, `process()`, `flush_to()`, `should_flush()`
+- `src/lib/log/sstable/mod.rs` — `SSTable` struct: bloom filter, boundary position, entry iteration
+- `src/lib/log/sstable/bloom_filter.rs` — `BloomFilter`, `BloomFilterReader`
+- `src/lib/log/sstable/compact.rs` — `Log::compact()` k-way merge; tombstone winners dropped
+- `src/lib/log/command.rs` — `Execute` trait on `Log`, command dispatch, `writeln!` responses
+- `src/lib/run.rs` — `Runner<R, W>` generic over `BufRead + Write`; shared by REPL and server
+- `src/bin/repl.rs` — REPL entry point; `Runner` with stdin/stdout
+- `src/bin/server.rs` — TCP server entry point; `TcpListener` loop, `Runner` per connection
+- `tests/server.rs` — integration test stubs for TCP server (assertions pending)
 
 ## Study list
 
@@ -183,7 +195,8 @@ Key files:
 - ~~Sorted merge (k-way merge) — merging multiple sorted SSTable files into one~~ — learned and implemented
 - ~~Bloom filters — probabilistic data structure for fast negative lookups~~ — learned and implemented: k=7 hashes, 10 bits/key, double-hashing, ~1% FP rate, xxh3
 - ~~Tombstone propagation in LSM-trees — how deletes must flow through SSTable levels to avoid resurrection; compaction as the suppression point~~ — learned and implemented
+- ~~TCP framing and wire protocols — newline-delimited text chosen; `BufReader::read_line()` for framing, `writeln!` + `flush()` for responses; `TcpStream::try_clone()` to split into reader/writer halves~~ — learned and implemented in Phase 5
 - Rust trait objects vs generics for shared serialization — relevant for future type design
 - Sparse index / index block — how SSTables avoid indexing every key (binary search between index points)
-- TCP framing and wire protocols — needed for Phase 5; look at length-prefixed framing and simple request/response design
 - `tokio` async runtime basics — needed for Phase 6 connection handling
+- `Arc<Mutex<Log>>` — needed for Phase 6 to share Log across threads

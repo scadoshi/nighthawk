@@ -106,7 +106,21 @@ tombstones survive into SSTables; `compact()` drops tombstone winners so they do
 - [x] All tests updated; 6 tests renamed to reflect new tombstone-storage semantics
 - [x] Resurrection bug fixed: set "a" → flush → delete "a" → get "a" returns None
 
-### Current test count: 89 passing, 0 ignored
+## Phase 5 — Network layer (COMPLETE except integration test assertions)
+
+### Completed
+- [x] Restructured `src/` into `src/lib/` (library crate) and `src/bin/` (REPL + server binaries)
+- [x] Updated visibility: `pub(crate)` → `pub` on `Log`, `Entry`, `Command`, `CommandError`, constants; re-exported via `log/mod.rs`
+- [x] `Runner<R, W>` in `src/lib/run.rs` — generic over `BufRead + Write`; owns the read/write loop; `Log` passed in per `run()` call
+- [x] `Execute` trait updated — `execute(&mut self, command, writer: &mut impl Write)` — responses written to generic writer, not stdout
+- [x] `src/bin/repl.rs` — `Runner::new(BufReader<Stdin>, Stdout)`, calls `runner.run(&mut log)`; tui welcome stays in bin
+- [x] `src/bin/server.rs` — `TcpListener::bind`, `listener.incoming()` loop; `Runner::new(BufReader<TcpStream>, BufWriter<TcpStream>)` per connection; single shared `Log`
+- [x] `TcpStream::try_clone()` used to split stream into reader + writer halves
+- [x] `writeln!` + `writer.flush()` after each response — correct for both stdout and TCP
+- [x] `unfallible_get` removed — `Runner::run()` inlines the read/parse/respond loop, handles errors by writing `ERR` to writer
+- [x] Integration test stubs in `tests/server.rs` — `start_server()` helper binds on port 0, spawns background thread; `send()` helper writes command and reads response; assertions to be filled in
+
+### Current test count: 92 passing, 0 ignored
 
 #### Test coverage by module
 - `log::entry` — 4 tests (key/value accessors for Set and Delete)
