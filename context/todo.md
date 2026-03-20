@@ -141,6 +141,7 @@ existing REPL; `Command::TryFrom<&str>` parsing is reused as-is.
 - [x] `Runner<R, W>` — generic over `BufRead + Write`, shared by REPL and server
 - [x] `src/bin/repl.rs` — uses `Runner` with `BufReader<Stdin> + Stdout`
 - [ ] Integration tests — stubs written in `tests/server.rs`, assertions to be filled in
+  - Note: `execute` uses `writeln!` so responses include a trailing `\n` — trim before asserting, or assert with `\n`
 
 ## Phase 5.5 — Configuration
 
