@@ -397,40 +397,40 @@ mod tests {
     #[test]
     fn execute_set_writes_key_value() {
         let (_dir, mut log) = temp_log();
-        assert_eq!(run(&mut log, Command::set("a", "1")), "a => 1");
+        assert_eq!(run(&mut log, Command::set("a", "1")).trim(), "a => 1");
     }
 
     #[test]
     fn execute_set_overwrite_writes_new_value() {
         let (_dir, mut log) = temp_log();
         run(&mut log, Command::set("a", "1"));
-        assert_eq!(run(&mut log, Command::set("a", "2")), "a => 2");
+        assert_eq!(run(&mut log, Command::set("a", "2")).trim(), "a => 2");
     }
 
     #[test]
     fn execute_get_existing_writes_key_value() {
         let (_dir, mut log) = temp_log();
         run(&mut log, Command::set("a", "1"));
-        assert_eq!(run(&mut log, Command::get("a")), "a => 1");
+        assert_eq!(run(&mut log, Command::get("a")).trim(), "a => 1");
     }
 
     #[test]
     fn execute_get_missing_writes_not_found() {
         let (_dir, mut log) = temp_log();
-        assert_eq!(run(&mut log, Command::get("a")), "a not found");
+        assert_eq!(run(&mut log, Command::get("a")).trim(), "a not found");
     }
 
     #[test]
     fn execute_delete_existing_writes_deleted() {
         let (_dir, mut log) = temp_log();
         run(&mut log, Command::set("a", "1"));
-        assert_eq!(run(&mut log, Command::delete("a")), "a deleted");
+        assert_eq!(run(&mut log, Command::delete("a")).trim(), "a deleted");
     }
 
     #[test]
     fn execute_delete_missing_writes_not_found() {
         let (_dir, mut log) = temp_log();
-        assert_eq!(run(&mut log, Command::delete("a")), "a not found");
+        assert_eq!(run(&mut log, Command::delete("a")).trim(), "a not found");
     }
 
     #[test]

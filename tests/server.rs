@@ -41,7 +41,7 @@ fn send(stream: &mut BufReader<TcpStream>, writer: &mut impl Write, cmd: &str) -
     response.trim().to_string()
 }
 
-// --- SET ---
+// --- set ---
 
 #[test]
 fn set_returns_ok() {
@@ -49,12 +49,11 @@ fn set_returns_ok() {
     let stream = TcpStream::connect(addr).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut writer = BufWriter::new(stream);
-
-    let response = send(&mut reader, &mut writer, "SET a 1");
-    // TODO: assert response equals the expected OK string
+    let response = send(&mut reader, &mut writer, "set a 1");
+    assert_eq!(response, "a => 1");
 }
 
-// --- GET ---
+// --- get ---
 
 #[test]
 fn get_existing_key_returns_value() {
@@ -62,10 +61,9 @@ fn get_existing_key_returns_value() {
     let stream = TcpStream::connect(addr).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut writer = BufWriter::new(stream);
-
-    send(&mut reader, &mut writer, "SET a 1");
-    let response = send(&mut reader, &mut writer, "GET a");
-    // TODO: assert response contains the value
+    send(&mut reader, &mut writer, "set a 1");
+    let response = send(&mut reader, &mut writer, "get a");
+    assert_eq!(response, "a => 1");
 }
 
 #[test]
@@ -74,12 +72,11 @@ fn get_missing_key_returns_not_found() {
     let stream = TcpStream::connect(addr).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut writer = BufWriter::new(stream);
-
-    let response = send(&mut reader, &mut writer, "GET missing");
-    // TODO: assert response equals the expected not-found string
+    let response = send(&mut reader, &mut writer, "get missing");
+    assert_eq!(response, "missing not found");
 }
 
-// --- DEL ---
+// --- del ---
 
 #[test]
 fn del_existing_key_returns_ok() {
@@ -87,10 +84,9 @@ fn del_existing_key_returns_ok() {
     let stream = TcpStream::connect(addr).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut writer = BufWriter::new(stream);
-
-    send(&mut reader, &mut writer, "SET a 1");
-    let response = send(&mut reader, &mut writer, "DEL a");
-    // TODO: assert response equals the expected deleted string
+    send(&mut reader, &mut writer, "set a 1");
+    let response = send(&mut reader, &mut writer, "del a");
+    assert_eq!(response, "a deleted");
 }
 
 #[test]
@@ -99,9 +95,8 @@ fn del_missing_key_returns_not_found() {
     let stream = TcpStream::connect(addr).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut writer = BufWriter::new(stream);
-
-    let response = send(&mut reader, &mut writer, "DEL missing");
-    // TODO: assert response equals the expected not-found string
+    let response = send(&mut reader, &mut writer, "del missing");
+    assert_eq!(response, "missing not found");
 }
 
 // --- Error handling ---
@@ -112,9 +107,8 @@ fn invalid_command_returns_err() {
     let stream = TcpStream::connect(addr).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut writer = BufWriter::new(stream);
-
-    let response = send(&mut reader, &mut writer, "INVALID");
-    // TODO: assert response starts with "ERR"
+    let response = send(&mut reader, &mut writer, "invalid");
+    assert_eq!(response, "Error: unrecognized command");
 }
 
 // --- Sequencing ---
@@ -125,9 +119,8 @@ fn set_then_del_then_get_returns_not_found() {
     let stream = TcpStream::connect(addr).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut writer = BufWriter::new(stream);
-
-    send(&mut reader, &mut writer, "SET a 1");
-    send(&mut reader, &mut writer, "DEL a");
-    let response = send(&mut reader, &mut writer, "GET a");
-    // TODO: assert response equals the expected not-found string
+    send(&mut reader, &mut writer, "set a 1");
+    send(&mut reader, &mut writer, "del a");
+    let response = send(&mut reader, &mut writer, "get a");
+    assert_eq!(response, "a not found");
 }
