@@ -106,6 +106,20 @@ tombstones survive into SSTables; `compact()` drops tombstone winners so they do
 - [x] All tests updated; 6 tests renamed to reflect new tombstone-storage semantics
 - [x] Resurrection bug fixed: set "a" → flush → delete "a" → get "a" returns None
 
+## Phase 6 — Concurrency (COMPLETE)
+
+- [x] `Arc<Mutex<Log>>` — `Log` wrapped at startup, cloned per connection thread
+- [x] `thread::spawn` per connection in `server.rs` — accept loop no longer blocks on single client
+- [x] Per-command locking in `Runner::run()` — `guard` acquired and released each iteration, not held for connection lifetime
+- [x] Connection errors logged via `eprintln!`, thread exits cleanly without taking down server
+- [x] `move` closure captures `Arc<Mutex<Log>>` clone into spawned thread
+- [x] CLI (`cli.rs`) also wraps `Log` in `Arc<Mutex<Log>>` — consistent interface across both binaries
+- [x] Verified: multiple concurrent connections handled correctly
+
+### Current test count: 99 passing, 0 ignored
+
+---
+
 ## Phase 5 + 5.5 — Network layer and configuration (COMPLETE)
 
 ### Completed
