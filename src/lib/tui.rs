@@ -6,7 +6,7 @@ pub fn welcome() {
     println!("Welcome to nighthawk");
     println!("Try the following commands");
     hr();
-    command_hint();
+    println!("{}", command_hint());
     hr();
 }
 
@@ -16,11 +16,9 @@ pub fn hr() {
 }
 
 /// Prints the list of available commands with aliases.
-pub fn command_hint() {
-    println!(
-        r"set <key> <value>    (alias: s)
+pub fn command_hint() -> &'static str {
+    r"set <key> <value>    (alias: s)
 get <key>            (alias: g)
 delete <key>         (alias: d, del)
 quit                 (alias: q, exit)"
-    );
 }

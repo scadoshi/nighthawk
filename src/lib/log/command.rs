@@ -1,10 +1,11 @@
-use crate::tui;
 use super::{Log, entry::Entry};
+use crate::tui;
+use std::io::Write;
 use thiserror::Error;
 
 /// Errors from parsing user input into a command.
 #[derive(Debug, Error)]
-pub(crate) enum CommandError {
+pub enum CommandError {
     /// Unrecognized command name.
     #[error("unrecognized command")]
     UnrecognizedCommand,
@@ -18,7 +19,7 @@ pub(crate) enum CommandError {
 
 /// A parsed user command. Not all variants produce log entries (e.g. Quit, Help).
 #[derive(Debug)]
-pub(crate) enum Command {
+pub enum Command {
     /// Store a key-value pair.
     Set { key: String, value: String },
     /// Retrieve the value for a key.
@@ -78,24 +79,8 @@ impl TryFrom<&str> for Command {
 }
 
 impl Command {
-    /// Loops on stdin until a valid command is parsed.
-    pub(crate) fn unfallible_get() -> Self {
-        loop {
-            let mut input_str = String::new();
-            std::io::stdin().read_line(&mut input_str).ok();
-            match Command::try_from(input_str.as_str()) {
-                Ok(input) => return input,
-                Err(e) => {
-                    eprintln!("Invalid input: {}", e);
-                    tui::hr();
-                    input_str.clear();
-                }
-            }
-        }
-    }
-
     /// Constructs a `Set` command.
-    pub(crate) fn set(key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn set(key: impl Into<String>, value: impl Into<String>) -> Self {
         Self::Set {
             key: key.into(),
             value: value.into(),
@@ -103,17 +88,17 @@ impl Command {
     }
 
     /// Constructs a `Get` command.
-    pub(crate) fn get(key: impl Into<String>) -> Self {
+    pub fn get(key: impl Into<String>) -> Self {
         Self::Get { key: key.into() }
     }
 
     /// Constructs a `Delete` command.
-    pub(crate) fn delete(key: impl Into<String>) -> Self {
+    pub fn delete(key: impl Into<String>) -> Self {
         Self::Delete { key: key.into() }
     }
 
     /// Returns the key for commands that carry one (`Set`, `Get`, `Delete`), `None` otherwise.
-    pub(crate) fn key(&self) -> Option<&str> {
+    pub fn key(&self) -> Option<&str> {
         match self {
             Self::Set { key, .. } | Self::Get { key } | Self::Delete { key } => Some(key.as_str()),
             Self::Quit | Self::Help => None,
@@ -121,7 +106,7 @@ impl Command {
     }
 
     /// Returns the value for `Set` commands, `None` for all others.
-    pub(crate) fn value(&self) -> Option<&str> {
+    pub fn value(&self) -> Option<&str> {
         match self {
             Self::Set { value, .. } => Some(value.as_str()),
             Self::Get { .. } | Self::Delete { .. } | Self::Quit | Self::Help => None,
@@ -131,40 +116,37 @@ impl Command {
 
 /// Runs a command against a log store. Separated from `Log` so command
 /// handling logic lives alongside the `Command` type.
-pub(crate) trait Execute {
+pub trait Execute {
     /// Dispatches a command: reads/writes the log and prints results.
-    fn execute(&mut self, command: Command) -> anyhow::Result<()>;
+    fn execute(&mut self, command: Command, writer: &mut impl Write) -> anyhow::Result<()>;
 }
 
 impl Execute for Log {
-    fn execute(&mut self, command: Command) -> anyhow::Result<()> {
+    fn execute(&mut self, command: Command, writer: &mut impl Write) -> anyhow::Result<()> {
         match command {
             Command::Set { key, value } => {
-                println!("{} => {}", key, value);
+                writeln!(writer, "{} => {}", key, value)?;
                 self.write(Entry::set(key, value))?;
                 self.maybe_flush()?;
             }
             Command::Get { key } => match self.get(&key)? {
-                Some(Entry::Set { value, .. }) => println!("{} => {}", key, value),
-                None => println!("{} not found", key),
+                Some(Entry::Set { value, .. }) => writeln!(writer, "{} => {}", key, value)?,
+                None => writeln!(writer, "{} not found", key)?,
                 Some(Entry::Delete { .. }) => unreachable!("Log::get never returns Delete"),
             },
             Command::Delete { key } => {
                 // Only write tombstone if key exists, avoids unnecessary log growth.
                 if self.contains(&key)? {
-                    println!("{} deleted", key);
+                    writeln!(writer, "{} deleted", key)?;
                     self.write(Entry::delete(key))?;
                 } else {
-                    println!("{} not found", key);
+                    writeln!(writer, "{} not found", key)?;
                 }
                 self.maybe_flush()?;
             }
             // Quit logic handled in run loop to avoid hard exit
-            Command::Quit => {}
-            Command::Help => {
-                tui::hr();
-                tui::command_hint();
-            }
+            Command::Quit => unreachable!("Run loop breaks before execute"),
+            Command::Help => writeln!(writer, "{}", tui::command_hint())?,
         }
 
         Ok(())
@@ -338,45 +320,39 @@ mod tests {
         (dir, log)
     }
 
+    fn run(log: &mut Log, cmd: Command) -> String {
+        let mut out = Vec::<u8>::new();
+        log.execute(cmd, &mut out).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    // --- State tests ---
+
     #[test]
     fn execute_set_adds_to_memtable() {
         let (_dir, mut log) = temp_log();
         let cmd = Command::set("a", "1");
         let key = cmd.key().unwrap().to_string();
-        log.execute(cmd).unwrap();
+        log.execute(cmd, &mut std::io::sink()).unwrap();
         assert_eq!(log.memtable.len(), 1);
         assert!(log.memtable.contains_key(&key));
     }
 
     #[test]
-    fn execute_get_existing_key() {
-        let (_dir, mut log) = temp_log();
-        let set = Command::set("a", "1");
-        let key = set.key().unwrap().to_string();
-        log.execute(set).unwrap();
-        log.execute(Command::get(key)).unwrap();
-    }
-
-    #[test]
-    fn execute_get_missing_key() {
-        let (_dir, mut log) = temp_log();
-        log.execute(Command::get("a")).unwrap();
-    }
-
-    #[test]
     fn execute_delete_existing_key_tombstones_key() {
         let (_dir, mut log) = temp_log();
-        let set = Command::set("a", "1");
-        let key = set.key().unwrap().to_string();
-        log.execute(set).unwrap();
-        log.execute(Command::delete(key)).unwrap();
+        log.execute(Command::set("a", "1"), &mut std::io::sink())
+            .unwrap();
+        log.execute(Command::delete("a"), &mut std::io::sink())
+            .unwrap();
         assert!(log.get("a").unwrap().is_none());
     }
 
     #[test]
-    fn execute_delete_missing_key() {
+    fn execute_delete_missing_key_leaves_memtable_empty() {
         let (_dir, mut log) = temp_log();
-        log.execute(Command::delete("a")).unwrap();
+        log.execute(Command::delete("a"), &mut std::io::sink())
+            .unwrap();
         assert!(log.memtable.is_empty());
     }
 
@@ -387,11 +363,10 @@ mod tests {
         let sstables_path = dir.path().join("sstables");
         {
             let mut log = Log::new(dir.path(), &memtable_path, &sstables_path, true).unwrap();
-            let set = Command::set("a", "1");
-            let key = set.key().unwrap().to_string();
-            let delete = Command::delete(key);
-            log.execute(set).unwrap();
-            log.execute(delete).unwrap();
+            log.execute(Command::set("a", "1"), &mut std::io::sink())
+                .unwrap();
+            log.execute(Command::delete("a"), &mut std::io::sink())
+                .unwrap();
         }
         let log = Log::new(dir.path(), &memtable_path, &sstables_path, false).unwrap();
         // tombstone is replayed from WAL into memtable
@@ -400,45 +375,67 @@ mod tests {
     }
 
     #[test]
-    fn execute_quit_is_noop() {
+    fn execute_help_leaves_memtable_empty() {
         let (_dir, mut log) = temp_log();
-        log.execute(Command::Quit).unwrap();
+        log.execute(Command::Help, &mut std::io::sink()).unwrap();
         assert!(log.memtable.is_empty());
-    }
-
-    #[test]
-    fn execute_help_is_noop() {
-        let (_dir, mut log) = temp_log();
-        log.execute(Command::Help).unwrap();
-        assert!(log.memtable.is_empty());
-    }
-
-    #[test]
-    fn execute_set_overwrite_updates_value() {
-        let dir = tempfile::tempdir().unwrap();
-        let memtable_path = dir.path().join("test.log");
-        let sstables_path = dir.path().join("sstables");
-        {
-            let mut log = Log::new(dir.path(), &memtable_path, &sstables_path, true).unwrap();
-            let first = Command::set("a", "1");
-            let key = first.key().unwrap().to_string();
-            let second = Command::set(key.clone(), "2");
-            log.execute(first).unwrap();
-            log.execute(second).unwrap();
-        }
-        let mut log = Log::new(dir.path(), &memtable_path, &sstables_path, false).unwrap();
-        assert_eq!(log.memtable.len(), 1);
-        log.execute(Command::get("a")).unwrap();
     }
 
     #[test]
     fn execute_get_finds_key_in_sstable_after_flush() {
         let (_dir, mut log) = temp_log();
-        let set = Command::set("a", "1");
-        let key = set.key().unwrap().to_string();
-        log.execute(set).unwrap();
+        log.execute(Command::set("a", "1"), &mut std::io::sink())
+            .unwrap();
         log.flush().unwrap();
-        assert!(log.contains(&key).unwrap());
-        log.execute(Command::get(key)).unwrap();
+        assert!(log.contains("a").unwrap());
+        log.execute(Command::get("a"), &mut std::io::sink())
+            .unwrap();
+    }
+
+    // --- Output tests ---
+
+    #[test]
+    fn execute_set_writes_key_value() {
+        let (_dir, mut log) = temp_log();
+        assert_eq!(run(&mut log, Command::set("a", "1")), "a => 1");
+    }
+
+    #[test]
+    fn execute_set_overwrite_writes_new_value() {
+        let (_dir, mut log) = temp_log();
+        run(&mut log, Command::set("a", "1"));
+        assert_eq!(run(&mut log, Command::set("a", "2")), "a => 2");
+    }
+
+    #[test]
+    fn execute_get_existing_writes_key_value() {
+        let (_dir, mut log) = temp_log();
+        run(&mut log, Command::set("a", "1"));
+        assert_eq!(run(&mut log, Command::get("a")), "a => 1");
+    }
+
+    #[test]
+    fn execute_get_missing_writes_not_found() {
+        let (_dir, mut log) = temp_log();
+        assert_eq!(run(&mut log, Command::get("a")), "a not found");
+    }
+
+    #[test]
+    fn execute_delete_existing_writes_deleted() {
+        let (_dir, mut log) = temp_log();
+        run(&mut log, Command::set("a", "1"));
+        assert_eq!(run(&mut log, Command::delete("a")), "a deleted");
+    }
+
+    #[test]
+    fn execute_delete_missing_writes_not_found() {
+        let (_dir, mut log) = temp_log();
+        assert_eq!(run(&mut log, Command::delete("a")), "a not found");
+    }
+
+    #[test]
+    fn execute_help_writes_command_list() {
+        let (_dir, mut log) = temp_log();
+        assert!(!run(&mut log, Command::Help).is_empty());
     }
 }
