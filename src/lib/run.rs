@@ -1,24 +1,41 @@
-use super::{
-    log::{
-        DATA_PATH, Log, SSTABLES_PATH, WAL_PATH,
-        command::{Command, Execute},
-    },
-    tui,
+use super::log::{
+    Log,
+    command::{Command, Execute},
 };
+use std::io::{BufRead, Write};
 
-/// Opens the log and runs the REPL until quit.
-pub fn run() -> anyhow::Result<()> {
-    tui::welcome();
-    let mut log = Log::new(DATA_PATH, WAL_PATH, SSTABLES_PATH, false)?;
-    loop {
-        let command = Command::unfallible_get();
-        if matches!(command, Command::Quit) {
-            tui::hr();
-            println!("Exiting process");
-            break;
-        }
-        log.execute(command)?;
-        tui::hr();
+pub struct Runner<R, W>
+where
+    R: BufRead,
+    W: Write,
+{
+    reader: R,
+    writer: W,
+}
+
+impl<R, W> Runner<R, W>
+where
+    R: BufRead,
+    W: Write,
+{
+    pub fn new(reader: R, writer: W) -> Self {
+        Self { reader, writer }
     }
-    Ok(())
+
+    pub fn run(&mut self, log: &mut Log) -> anyhow::Result<()> {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if self.reader.read_line(&mut line)? == 0 {
+                break;
+            }
+            match Command::try_from(line.trim()) {
+                Ok(Command::Quit) => break,
+                Ok(cmd) => log.execute(cmd, &mut self.writer)?,
+                Err(e) => writeln!(self.writer, "Error: {}", e)?,
+            }
+            self.writer.flush()?;
+        }
+        Ok(())
+    }
 }
