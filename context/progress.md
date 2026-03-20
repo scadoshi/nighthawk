@@ -106,26 +106,29 @@ tombstones survive into SSTables; `compact()` drops tombstone winners so they do
 - [x] All tests updated; 6 tests renamed to reflect new tombstone-storage semantics
 - [x] Resurrection bug fixed: set "a" → flush → delete "a" → get "a" returns None
 
-## Phase 5 — Network layer (COMPLETE except integration test assertions)
+## Phase 5 + 5.5 — Network layer and configuration (COMPLETE)
 
 ### Completed
-- [x] Restructured `src/` into `src/lib/` (library crate) and `src/bin/` (REPL + server binaries)
+- [x] Restructured `src/` into `src/lib/` (library crate) and `src/bin/` (CLI + server binaries)
 - [x] Updated visibility: `pub(crate)` → `pub` on `Log`, `Entry`, `Command`, `CommandError`, constants; re-exported via `log/mod.rs`
 - [x] `Runner<R, W>` in `src/lib/run.rs` — generic over `BufRead + Write`; owns the read/write loop; `Log` passed in per `run()` call
 - [x] `Execute` trait updated — `execute(&mut self, command, writer: &mut impl Write)` — responses written to generic writer, not stdout
-- [x] `src/bin/repl.rs` — `Runner::new(BufReader<Stdin>, Stdout)`, calls `runner.run(&mut log)`; tui welcome stays in bin
+- [x] `src/bin/cli.rs` — `Runner::new(BufReader<Stdin>, Stdout)`, calls `runner.run(&mut log)`; tui welcome stays in bin
 - [x] `src/bin/server.rs` — `TcpListener::bind`, `listener.incoming()` loop; `Runner::new(BufReader<TcpStream>, BufWriter<TcpStream>)` per connection; single shared `Log`
 - [x] `TcpStream::try_clone()` used to split stream into reader + writer halves
 - [x] `writeln!` + `writer.flush()` after each response — correct for both stdout and TCP
-- [x] `unfallible_get` removed — `Runner::run()` inlines the read/parse/respond loop, handles errors by writing `ERR` to writer
-- [x] Integration test stubs in `tests/server.rs` — `start_server()` helper binds on port 0, spawns background thread; `send()` helper writes command and reads response; assertions to be filled in
+- [x] `unfallible_get` removed — `Runner::run()` inlines the read/parse/respond loop, handles errors by writing `Error: ...` to writer
+- [x] 7 integration tests in `tests/server.rs` — `start_server()` binds port 0, spawns background thread; covers set/get/del/err/sequencing
+- [x] `dotenvy` for `.env` loading — `ADDRESS` and `PORT` vars required at server startup
+- [x] `.env` in `.gitignore`, `.env.template` committed as reference
 
-### Current test count: 92 passing, 0 ignored
+### Current test count: 99 passing, 0 ignored
 
 #### Test coverage by module
 - `log::entry` — 4 tests (key/value accessors for Set and Delete)
 - `log::header` — 11 tests (round-trips, has_at_least_one, corruption variants)
-- `log::wal::memtable` — 19 tests (from_file, process, flush, bloom filter)
+- `log::memtable` — 19 tests (from_file, process, flush, bloom filter)
 - `log::sstable::compact` — 9 tests (includes tombstone drop, overlapping keys, single-file case)
-- `log::command` — 32 tests (parser aliases/errors, Execute trait paths)
+- `log::command` — 32 tests (parser aliases/errors, Execute trait paths, output assertions)
 - `log::tests` — 15 tests (includes resurrection regression, bloom filter integration, tombstone in memtable)
+- `tests::server` — 7 integration tests (TCP server set/get/del/err/sequencing)

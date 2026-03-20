@@ -140,14 +140,14 @@ existing REPL; `Command::TryFrom<&str>` parsing is reused as-is.
 - [x] Wire up `Log` via `Execute` trait inside `Runner::run()`
 - [x] `Runner<R, W>` — generic over `BufRead + Write`, shared by REPL and server
 - [x] `src/bin/repl.rs` — uses `Runner` with `BufReader<Stdin> + Stdout`
-- [ ] Integration tests — stubs written in `tests/server.rs`, assertions to be filled in
-  - Note: `execute` uses `writeln!` so responses include a trailing `\n` — trim before asserting, or assert with `\n`
+- [x] Integration tests — 7 tests passing in `tests/server.rs`
 
-## Phase 5.5 — Configuration
+## Phase 5.5 — Configuration (COMPLETE)
 
-- [ ] `.env` file loading — read `BIND_ADDRESS` and `BIND_PORT` at server startup (use `dotenvy` crate)
-- [ ] Fall back to defaults (`127.0.0.1:3000`) if `.env` absent or values missing
-- [ ] Pass resolved bind address into `TcpListener::bind()` in `server.rs`
+- [x] `.env` file loading via `dotenvy` — `dotenvy::dotenv().ok()` at server startup
+- [x] `ADDRESS` and `PORT` read from env; no fallback (server errors if missing)
+- [x] `.env` added to `.gitignore`; `.env.template` committed as reference
+- [x] CLI binary renamed from `repl` to `cli` (`src/bin/cli.rs`)
 
 ## Phase 6 — Concurrency
 
