@@ -8,8 +8,12 @@ use std::{
 };
 
 fn server() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+    let address = std::env::var("ADDRESS")?;
+    let port = std::env::var("PORT")?;
+    let bind_address = format!("{}:{}", address, port);
     let mut log = Log::new(DATA_PATH, WAL_PATH, SSTABLES_PATH, false)?;
-    let listener = TcpListener::bind("127.0.0.1:3000")?;
+    let listener = TcpListener::bind(bind_address)?;
     println!("Listening on {}", listener.local_addr()?);
     for stream in listener.incoming() {
         let stream = stream?;
